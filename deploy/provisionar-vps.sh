@@ -41,7 +41,9 @@ for amb in producao homolog; do
   for svc in back web; do
     install -d -m 750 -o deploy -g deploy "/srv/bolao/$amb/$svc"
   done
-  install -d -m 750 -o deploy -g deploy "/srv/bolao/$amb/back/initdb" "/srv/bolao/$amb/back/backups"
+  install -d -m 750 -o deploy -g deploy "/srv/bolao/$amb/back/backups"
+  # initdb precisa ser legível pelo usuário do Postgres dentro do container (não é o dono); sem segredos.
+  install -d -m 755 -o deploy -g deploy "/srv/bolao/$amb/back/initdb"
   install -m 0755 -o deploy -g deploy "$AQUI/initdb/01-papel-app.sh" "/srv/bolao/$amb/back/initdb/01-papel-app.sh" 2>/dev/null || true
 done
 
