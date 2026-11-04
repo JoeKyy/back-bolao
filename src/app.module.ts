@@ -10,6 +10,10 @@ import { LimitesModule, LimitesService } from "./common/limites.service";
 import { PrismaModule, PrismaService } from "./prisma/prisma.service";
 import { ConviteOrganizadorController, OrganizadoresController } from "./organizadores/organizadores.controller";
 import { OrganizadoresService } from "./organizadores/organizadores.service";
+import { ConvitesService } from "./organizadores/convites.service";
+import { CodigosService } from "./auth/codigos.service";
+import { LoginCriptoService } from "./auth/login-cripto.service";
+import { MailService } from "./mail/mail.service";
 import { PublicoController } from "./publico/publico.controller";
 import { PublicoService } from "./publico/publico.service";
 import contrato from "./shared/contrato.json";
@@ -60,6 +64,6 @@ class Varredura implements OnModuleInit, OnModuleDestroy {
 @Module({
   imports: [PrismaModule, LimitesModule],
   controllers: [SaudeController, AuthController, BoloesController, PublicoController, OrganizadoresController, ConviteOrganizadorController],
-  providers: [AuthService, AdminGuard, PapelAdminGuard, DonoDoBolaoGuard, OrganizadoresService, BoloesService, CaixaService, PublicoService, Varredura],
+  providers: [AuthService, LoginCriptoService, CodigosService, ConvitesService, MailService, AdminGuard, PapelAdminGuard, DonoDoBolaoGuard, OrganizadoresService, BoloesService, CaixaService, PublicoService, Varredura],
 })
 export class AppModule {}

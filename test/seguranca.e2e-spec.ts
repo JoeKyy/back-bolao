@@ -1,7 +1,7 @@
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import request from "supertest";
 import type { PrismaService } from "../src/prisma/prisma.service";
-import { ORIGEM, cliente, entrarComoAdmin, limpar, subirApp } from "./util";
+import { ORIGEM, cliente, entrarComoAdmin, limpar, subirApp, login } from "./util";
 
 describe("segurança", () => {
   let app: NestExpressApplication;
@@ -24,7 +24,7 @@ describe("segurança", () => {
         .set("Origin", ORIGEM)
         .set("X-Bolao", "1")
         .set("X-Forwarded-For", xff)
-        .send({ email: "admin@teste.local", senha: "errada" });
+        .send(login("admin@teste.local", "errada"));
 
     it("trocar X-Forwarded-For a cada tentativa NÃO burla o bloqueio", async () => {
       const status: number[] = [];
@@ -41,7 +41,7 @@ describe("segurança", () => {
 
     it("bloqueado, nem a senha certa entra", async () => {
       for (let i = 0; i < 5; i++) await errar("1.1.1.1");
-      const r = await cliente(app).post("/auth/entrar", { email: "admin@teste.local", senha: "senha-de-teste-123" });
+      const r = await cliente(app).post("/auth/entrar", login("admin@teste.local", "senha-de-teste-123"));
       expect(r.status).toBe(429);
     });
   });
@@ -55,12 +55,12 @@ describe("segurança", () => {
       const c = await entrarComoAdmin(app);
       const s = await prisma.sessao.findFirstOrThrow();
       expect(s.tokenHash).toHaveLength(64); // só o hash no banco
-      const login = await request(app.getHttpServer())
+      const respLogin = await request(app.getHttpServer())
         .post("/auth/entrar")
         .set("Origin", ORIGEM)
         .set("X-Bolao", "1")
-        .send({ email: "admin@teste.local", senha: "senha-de-teste-123" });
-      const cookie = login.headers["set-cookie"] as unknown as string[];
+        .send(login("admin@teste.local", "senha-de-teste-123"));
+      const cookie = respLogin.headers["set-cookie"] as unknown as string[];
       await request(app.getHttpServer()).get("/boloes").set("Cookie", cookie).expect(200);
       await request(app.getHttpServer()).post("/auth/sair").set("Origin", ORIGEM).set("X-Bolao", "1").set("Cookie", cookie).expect(200);
       await request(app.getHttpServer()).get("/boloes").set("Cookie", cookie).expect(401);
@@ -72,7 +72,7 @@ describe("segurança", () => {
     });
 
     it("cookie da sessão é httpOnly e SameSite=Lax", async () => {
-      const r = await cliente(app).post("/auth/entrar", { email: "admin@teste.local", senha: "senha-de-teste-123" });
+      const r = await cliente(app).post("/auth/entrar", login("admin@teste.local", "senha-de-teste-123"));
       const cookie = (r.headers["set-cookie"] as unknown as string[])[0];
       expect(cookie).toMatch(/HttpOnly/i);
       expect(cookie).toMatch(/SameSite=Lax/i);
@@ -85,7 +85,7 @@ describe("segurança", () => {
       await b.get("/boloes").expect(401);
       // volta a senha para os outros testes
       const c = cliente(app);
-      await c.post("/auth/entrar", { email: "admin@teste.local", senha: "outra-senha-bem-longa" }).expect(200);
+      await c.post("/auth/entrar", login("admin@teste.local", "outra-senha-bem-longa")).expect(200);
       await c.post("/auth/senha", { atual: "outra-senha-bem-longa", nova: "senha-de-teste-123" }).expect(200);
     });
   });
@@ -95,7 +95,7 @@ describe("segurança", () => {
       await request(app.getHttpServer())
         .post("/auth/entrar")
         .set("Origin", ORIGEM)
-        .send({ email: "admin@teste.local", senha: "senha-de-teste-123" })
+        .send(login("admin@teste.local", "senha-de-teste-123"))
         .expect(403);
     });
 
@@ -104,7 +104,7 @@ describe("segurança", () => {
         .post("/auth/entrar")
         .set("Origin", "https://site-malicioso.example")
         .set("X-Bolao", "1")
-        .send({ email: "admin@teste.local", senha: "senha-de-teste-123" })
+        .send(login("admin@teste.local", "senha-de-teste-123"))
         .expect(403);
     });
 

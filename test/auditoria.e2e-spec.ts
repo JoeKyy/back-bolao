@@ -2,7 +2,7 @@
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import request from "supertest";
 import type { PrismaService } from "../src/prisma/prisma.service";
-import { ORIGEM, cliente, entrarComoAdmin, limpar, subirApp } from "./util";
+import { ORIGEM, cliente, entrarComoAdmin, limpar, subirApp, login } from "./util";
 
 describe("auditoria do agente", () => {
   let app: NestExpressApplication;
@@ -121,7 +121,7 @@ describe("auditoria do agente", () => {
           .post("/auth/entrar")
           .set("Origin", ORIGEM)
           .set("X-Bolao", "1")
-          .send({ email: "admin@teste.local", senha: "errada" }),
+          .send(login("admin@teste.local", "errada")),
       );
       const st = (await Promise.all(reqs)).map((r) => r.status);
       expect(st.filter((s) => s === 401).length).toBeLessThanOrEqual(5);
@@ -145,12 +145,12 @@ describe("auditoria do agente", () => {
   describe("SEC-06: limite global não tranca o aparelho conhecido do organizador", () => {
     it("com 30 falhas de outros IPs, o organizador entra pelo aparelho de sempre", async () => {
       const adm = cliente(app);
-      await adm.post("/auth/entrar", { email: "admin@teste.local", senha: "senha-de-teste-123" }).expect(200);
+      await adm.post("/auth/entrar", login("admin@teste.local", "senha-de-teste-123")).expect(200);
       await prisma.tentativa.createMany({ data: Array.from({ length: 30 }, () => ({ chave: "login:falha" })) });
       // aparelho novo: barrado pelo teto global
-      expect((await cliente(app).post("/auth/entrar", { email: "admin@teste.local", senha: "senha-de-teste-123" })).status).toBe(429);
+      expect((await cliente(app).post("/auth/entrar", login("admin@teste.local", "senha-de-teste-123"))).status).toBe(429);
       // aparelho conhecido (cookie bolao_org do login anterior): entra
-      await adm.post("/auth/entrar", { email: "admin@teste.local", senha: "senha-de-teste-123" }).expect(200);
+      await adm.post("/auth/entrar", login("admin@teste.local", "senha-de-teste-123")).expect(200);
     });
   });
 

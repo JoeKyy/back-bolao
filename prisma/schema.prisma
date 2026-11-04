@@ -24,29 +24,42 @@ model Usuario {
   nome      String                @default("")
   papel     Papel                 @default(ORGANIZADOR)
   ativo     Boolean               @default(true)
-  senhaHash String
+  /// Nulo = conta criada pelo ADMIN com convite ainda não aceito (como no gestor).
+  senhaHash String?
   criadoEm  DateTime              @default(now())
   sessoes   Sessao[]
   aparelhos AparelhoOrganizador[]
   boloes    Bolao[]
-  convites  ConviteOrganizador[]  @relation("ConvitesDoUsuario")
+  convites  ConviteOrganizador[]
+  codigos   CodigoRecuperacao[]
 }
 
-/// Link de uso único para criar conta de organizador (ou trocar a senha de uma existente).
-/// No banco só o sha256 do token.
+/// Link de uso único para definir a senha: ativa a conta nova (convite) ou troca a senha de uma
+/// conta existente (reemissão pelo ADMIN ou "esqueci minha senha"). Mesmo esquema do gestor
+/// (InviteToken). No banco só o sha256 do token.
 model ConviteOrganizador {
   id        Int       @id @default(autoincrement())
   tokenHash String    @unique
-  email     String
-  nome      String    @default("")
-  /// Preenchido quando é troca de senha de uma conta que já existe.
-  usuarioId Int?
-  usuario   Usuario?  @relation("ConvitesDoUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+  usuarioId Int
+  usuario   Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   criadoEm  DateTime  @default(now())
   expiraEm  DateTime
   usadoEm   DateTime?
 
-  @@index([email])
+  @@index([usuarioId])
+}
+
+/// Códigos de recuperação (8 por lote, uso único), gerados pelo próprio organizador com a senha
+/// atual. Como no gestor (RecoveryCode). No banco só o sha256.
+model CodigoRecuperacao {
+  id         Int       @id @default(autoincrement())
+  usuarioId  Int
+  usuario    Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  codigoHash String    @unique
+  usadoEm    DateTime?
+  criadoEm   DateTime  @default(now())
+
+  @@index([usuarioId])
 }
 
 /// Aparelho onde o organizador já entrou com sucesso (cookie aleatório; aqui só o sha256).

@@ -54,6 +54,21 @@ Pedido do Joe: o criador do bolão é o tesoureiro; só ele registra o Pix, mand
 | ORG-04 | Convite de organizador | Token de 32 bytes, só o hash no banco, 7 dias, uso único consumido de forma atômica (3 aceites simultâneos criam 1 conta), convite novo invalida o anterior, e-mail já cadastrado dá 409, senha 12+, limite de 20 por IP em 10 min. | e2e |
 | ORG-05 | Gestão de contas | Só ADMIN (`PapelAdminGuard`, 403 para organizador): convidar, desativar (sessões caem na hora, login responde igual a senha errada), reativar, link de troca de senha (derruba as sessões antigas). ADMIN não desativa a si mesmo. | e2e |
 
+## Login no esquema do gestor (04/11/2026), branch `feat/login-gestor`
+
+Pedido do Joe: login por convite e usuário e senha no mesmo esquema do Gestor de Conteúdo. Portado de `nahub/back-gestao-conteudo/src/auth`.
+
+| ID | Item | Como | Evidência |
+|---|---|---|---|
+| LOG-01 | Conta criada pelo ADMIN | Convidar cria o `Usuario` (nome, e-mail) com `senhaHash` nulo ("convite pendente"); o link (7 dias, uso único, só hash) define a senha. Reemitir o link troca a senha (rota `/organizadores/:uid/link`). Migração `login_gestor` escrita à mão converte convites pendentes em contas pendentes (ensaiada em banco descartável). | e2e; ensaio da migração |
+| LOG-02 | Senha cifrada no login | `GET /auth/chave-publica` + RSA-OAEP/SHA-256 no navegador (mesmo código do gestor); texto puro é recusado (400). Chave em memória, renovada a cada subida (uma instância). | e2e; no navegador o corpo do login só tem `email` e `senhaCifrada` |
+| LOG-03 | Política de senha | `exigirSenhaAceitavel`: lista do gestor + palavras do bolão (mega, bolão, virada...), sequências e repetição, nome e e-mail; mínimo 12. Vale no convite, na troca e na recuperação. | unitários e e2e |
+| LOG-04 | Esqueci minha senha | `POST /auth/esqueci` sempre 202 com a mesma mensagem; 5 por IP em 10 min e 3 por conta por hora; link por e-mail se `SMTP_URL` existir; o link nunca vai para o log. | e2e (mesma resposta; só a conta existente ganha link) |
+| LOG-05 | Códigos de recuperação | 8 por lote (alfabeto sem caracteres ambíguos), uso único atômico, só hash; gerar exige a senha atual (com limite); recuperar troca a senha, derruba as sessões e entra. | e2e e navegador |
+| LOG-06 | Sessão | Mantida a sessão opaca do bolão (revogação imediata) em vez do JWT + refresh do gestor; para quem usa, o comportamento é o mesmo. Decisão registrada. | n/a |
+
+Pendente: configurar SMTP no servidor (ou aceitar que a recuperação seja só por código e por link do ADMIN).
+
 ## Novos controles (entraram com a reescrita)
 
 - CSRF: escrita exige `X-Bolao: 1` e `Origin` na lista de `CORS_ORIGINS`; CORS só para essas origens, com credenciais.
@@ -72,7 +87,7 @@ Pedido do Joe: o criador do bolão é o tesoureiro; só ele registra o Pix, mand
 
 ## Evidências (04/11/2026, local)
 
-- `pnpm test`: 44 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 47 testes contra Postgres 16 real (`bolao_teste`), incluindo os da auditoria. `pnpm lint` e `tsc` sem problemas. `nest build` ok.
+- `pnpm test`: 44 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 52 testes contra Postgres 16 real (`bolao_teste`), incluindo os da auditoria. `pnpm lint` e `tsc` sem problemas. `nest build` ok.
 - Ponta a ponta com o front e importação real da Caixa (concurso 3080): prêmio de quina R$ 38.878,66 + quadra R$ 514,10 = R$ 39.392,76, igual ao calculado.
 
 ## Ambientes

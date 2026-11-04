@@ -1,7 +1,7 @@
 // Vários organizadores: cada um é o tesoureiro dos próprios bolões.
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import type { PrismaService } from "../src/prisma/prisma.service";
-import { cliente, entrarComoAdmin, limpar, subirApp } from "./util";
+import { cliente, entrarComoAdmin, limpar, subirApp, login } from "./util";
 
 describe("vários organizadores", () => {
   let app: NestExpressApplication;
@@ -34,7 +34,7 @@ describe("vários organizadores", () => {
     await cliente(app).get(`/convite-organizador/${token}`).expect(404);
     await cliente(app).post(`/convite-organizador/${token}`, { nome: "Outra", senha: "outra-senha-longa-1" }).expect(404);
     // e ela entra depois com e-mail e senha
-    await cliente(app).post("/auth/entrar", { email: "bia@exemplo.com", senha: "senha-da-organizadora-1" }).expect(200);
+    await cliente(app).post("/auth/entrar", login("bia@exemplo.com", "senha-da-organizadora-1")).expect(200);
   });
 
   it("senha curta no convite é recusada", async () => {
@@ -112,9 +112,9 @@ describe("vários organizadores", () => {
     const uid = ((await adm.get("/organizadores")).body as { id: number; email: string }[]).find((o) => o.email === "bia@exemplo.com")!.id;
     await adm.post(`/organizadores/${uid}/ativo`, { ativo: false }).expect(204);
     await bia.get("/boloes").expect(401);
-    await cliente(app).post("/auth/entrar", { email: "bia@exemplo.com", senha: "senha-da-organizadora-1" }).expect(401);
+    await cliente(app).post("/auth/entrar", login("bia@exemplo.com", "senha-da-organizadora-1")).expect(401);
     await adm.post(`/organizadores/${uid}/ativo`, { ativo: true }).expect(204);
-    await cliente(app).post("/auth/entrar", { email: "bia@exemplo.com", senha: "senha-da-organizadora-1" }).expect(200);
+    await cliente(app).post("/auth/entrar", login("bia@exemplo.com", "senha-da-organizadora-1")).expect(200);
     // não desativa a si mesmo
     const meuId = ((await adm.get("/auth/eu")).body as { id: number }).id;
     expect((await adm.post(`/organizadores/${meuId}/ativo`, { ativo: false })).status).toBe(400);
@@ -124,25 +124,30 @@ describe("vários organizadores", () => {
     const { org: bia } = await novoOrganizador("bia@exemplo.com", "Bia");
     const adm = await entrarComoAdmin(app);
     const uid = ((await adm.get("/organizadores")).body as { id: number; email: string }[]).find((o) => o.email === "bia@exemplo.com")!.id;
-    const { token } = (await adm.post(`/organizadores/${uid}/troca-senha`).expect(201)).body as { token: string };
+    const { token } = (await adm.post(`/organizadores/${uid}/link`).expect(201)).body as { token: string };
     expect((await cliente(app).get(`/convite-organizador/${token}`)).body.tipo).toBe("troca");
     await cliente(app).post(`/convite-organizador/${token}`, { nome: "Bia", senha: "senha-nova-da-bia-2" }).expect(200);
     await bia.get("/boloes").expect(401);
-    await cliente(app).post("/auth/entrar", { email: "bia@exemplo.com", senha: "senha-da-organizadora-1" }).expect(401);
-    await cliente(app).post("/auth/entrar", { email: "bia@exemplo.com", senha: "senha-nova-da-bia-2" }).expect(200);
+    await cliente(app).post("/auth/entrar", login("bia@exemplo.com", "senha-da-organizadora-1")).expect(401);
+    await cliente(app).post("/auth/entrar", login("bia@exemplo.com", "senha-nova-da-bia-2")).expect(200);
   });
 
-  it("convite com e-mail já cadastrado dá 409; convite novo invalida o anterior", async () => {
+  it("e-mail já cadastrado dá 409; conta fica pendente e novo link invalida o anterior", async () => {
     const adm = await entrarComoAdmin(app);
     await adm.post("/organizadores/convites", { email: "admin@teste.local", nome: "Dup" }).expect(409);
-    const a = (await adm.post("/organizadores/convites", { email: "d@exemplo.com", nome: "Davi" })).body as { token: string };
-    const b = (await adm.post("/organizadores/convites", { email: "d@exemplo.com", nome: "Davi" })).body as { token: string };
+    const a = (await adm.post("/organizadores/convites", { email: "d@exemplo.com", nome: "Davi" }).expect(201)).body as { token: string };
+    await adm.post("/organizadores/convites", { email: "d@exemplo.com", nome: "Davi" }).expect(409);
+    const lista = (await adm.get("/organizadores")).body as { id: number; email: string; pendente: boolean }[];
+    const davi = lista.find((o) => o.email === "d@exemplo.com")!;
+    expect(davi.pendente).toBe(true);
+    // conta pendente não entra (sem senha)
+    await cliente(app).post("/auth/entrar", login("d@exemplo.com", "qualquer-senha-longa")).expect(401);
+    const b = (await adm.post(`/organizadores/${davi.id}/link`).expect(201)).body as { token: string };
     await cliente(app).get(`/convite-organizador/${a.token}`).expect(404);
-    await cliente(app).get(`/convite-organizador/${b.token}`).expect(200);
-    // no banco só o hash
-    const c = await prisma.conviteOrganizador.findFirstOrThrow({ where: { email: "d@exemplo.com", usadoEm: null }, orderBy: { id: "desc" } });
-    expect(c.tokenHash).not.toBe(b.token);
+    expect((await cliente(app).get(`/convite-organizador/${b.token}`).expect(200)).body.tipo).toBe("novo");
+    const c = await prisma.conviteOrganizador.findFirstOrThrow({ where: { usuarioId: davi.id, usadoEm: null } });
     expect(c.tokenHash).toHaveLength(64);
+    expect(c.tokenHash).not.toBe(b.token);
   });
 
   it("dois aceites simultâneos do mesmo convite criam uma conta só", async () => {
@@ -153,5 +158,58 @@ describe("vários organizadores", () => {
     );
     expect(st.map((r) => r.status).filter((s) => s === 200)).toHaveLength(1);
     expect(await prisma.usuario.count({ where: { email: "e@exemplo.com" } })).toBe(1);
+  });
+
+  describe("esquema de login do gestor", () => {
+    it("senha em texto puro no login é recusada", async () => {
+      const r = await cliente(app).post("/auth/entrar", { email: "admin@teste.local", senha: "senha-de-teste-123" });
+      expect(r.status).toBe(400);
+      const cifra = await cliente(app).post("/auth/entrar", { email: "admin@teste.local", senhaCifrada: Buffer.alloc(256, 1).toString("base64") });
+      expect(cifra.status).toBe(401);
+    });
+
+    it("chave pública disponível sem login", async () => {
+      expect((await cliente(app).get("/auth/chave-publica").expect(200)).body.chavePublica).toContain("BEGIN PUBLIC KEY");
+    });
+
+    it("política de senha no convite: comum, sequência e o próprio nome", async () => {
+      const adm = await entrarComoAdmin(app);
+      const { token } = (await adm.post("/organizadores/convites", { email: "fabio.souza@exemplo.com", nome: "Fabio Souza" })).body as { token: string };
+      const tenta = (senha: string) => cliente(app).post(`/convite-organizador/${token}`, { nome: "Fabio Souza", senha });
+      expect((await tenta("MegaDaVirada2026")).body.codigo).toBe("senha_comum");
+      expect((await tenta("abcdefghijkl")).body.codigo).toBe("senha_comum");
+      expect((await tenta("fabiosouza2026")).body.codigo).toBe("senha_pessoal");
+      await tenta("cavalo-azul-bateria-grampo").expect(200);
+    });
+
+    it("esqueci: mesma resposta para conta que existe e que não existe; só a existente ganha link", async () => {
+      const { org: _bia } = await novoOrganizador("bia@exemplo.com", "Bia");
+      const antes = await prisma.conviteOrganizador.count();
+      const sim = await cliente(app).post("/auth/esqueci", { email: "bia@exemplo.com" });
+      const nao = await cliente(app).post("/auth/esqueci", { email: "ninguem@exemplo.com" });
+      expect(sim.status).toBe(202);
+      expect(nao.status).toBe(202);
+      expect(sim.body).toEqual(nao.body);
+      expect(await prisma.conviteOrganizador.count()).toBe(antes + 1);
+    });
+
+    it("códigos de recuperação: exigem a senha, valem uma vez e derrubam as sessões", async () => {
+      const { org: bia } = await novoOrganizador("bia@exemplo.com", "Bia");
+      await bia.post("/auth/codigos", { senha: "errada" }).expect(401);
+      const { codigos } = (await bia.post("/auth/codigos", { senha: "senha-da-organizadora-1" }).expect(200)).body as { codigos: string[] };
+      expect(codigos).toHaveLength(8);
+      expect(codigos[0]).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+      expect((await bia.get("/auth/codigos")).body.restantes).toBe(8);
+      expect(await prisma.codigoRecuperacao.count({ where: { codigoHash: codigos[0] } })).toBe(0); // só hash
+
+      const r = cliente(app);
+      await r.post("/auth/recuperar", { email: "bia@exemplo.com", codigo: codigos[0].toLowerCase(), novaSenha: "girafa-roxa-teclado-nuvem" }).expect(200);
+      await r.get("/boloes").expect(200); // já entrou
+      await bia.get("/boloes").expect(401); // sessão antiga caiu
+      await cliente(app).post("/auth/recuperar", { email: "bia@exemplo.com", codigo: codigos[0], novaSenha: "outra-girafa-roxa-teclado" }).expect(401);
+      await cliente(app).post("/auth/entrar", login("bia@exemplo.com", "girafa-roxa-teclado-nuvem")).expect(200);
+      // código de outra pessoa não serve
+      await cliente(app).post("/auth/recuperar", { email: "admin@teste.local", codigo: codigos[1], novaSenha: "girafa-roxa-teclado-nuvem" }).expect(401);
+    });
   });
 });

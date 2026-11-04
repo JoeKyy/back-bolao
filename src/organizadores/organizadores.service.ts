@@ -1,20 +1,20 @@
 import { Injectable } from "@nestjs/common";
 import bcrypt from "bcryptjs";
-import { conflito, invalido, muitasTentativas, naoEncontrado } from "../common/erros";
-import { LimitesService, agruparIp } from "../common/limites.service";
-import { TOKEN_RE, hashToken, novoTokenSecreto } from "../common/tokens";
+import { conflito, invalido, naoEncontrado } from "../common/erros";
+import { exigirSenhaAceitavel } from "../auth/senha";
 import { PrismaService } from "../prisma/prisma.service";
 import type { ConviteOrganizadorCriado, ConviteOrganizadorPublico, OrganizadorDTO } from "../shared/tipos";
+import { ConvitesService } from "./convites.service";
 
-export const CONVITE_ORG_DIAS = 7;
-const CONVITE_JANELA_MS = 10 * 60 * 1000;
-const CONVITE_MAX_POR_IP = 20;
-
+/**
+ * Contas de organizador no esquema do gestor: o ADMIN cria a conta (nome e e-mail) e ela fica
+ * pendente até a pessoa definir a senha pelo link. Reemitir o link troca a senha.
+ */
 @Injectable()
 export class OrganizadoresService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly limites: LimitesService,
+    private readonly convites: ConvitesService,
   ) {}
 
   async listar(): Promise<OrganizadorDTO[]> {
@@ -25,34 +25,29 @@ export class OrganizadoresService {
       email: u.email,
       papel: u.papel,
       ativo: u.ativo,
+      pendente: u.senhaHash === null,
       boloes: u._count.boloes,
       criadoEm: u.criadoEm.toISOString(),
     }));
   }
 
-  private async emitir(email: string, nome: string, usuarioId: number | null): Promise<ConviteOrganizadorCriado> {
-    const token = novoTokenSecreto();
-    const expiraEm = new Date(Date.now() + CONVITE_ORG_DIAS * 24 * 60 * 60 * 1000);
-    await this.prisma.$transaction(async (tx) => {
-      // Um convite vivo por e-mail: emitir outro invalida o anterior.
-      await tx.conviteOrganizador.updateMany({ where: { email, usadoEm: null }, data: { expiraEm: new Date() } });
-      await tx.conviteOrganizador.create({ data: { tokenHash: hashToken(token), email, nome, usuarioId, expiraEm } });
-    });
-    return { token, expiraEm: expiraEm.toISOString() };
-  }
-
   async convidar(emailBruto: string, nome: string): Promise<ConviteOrganizadorCriado> {
     const email = emailBruto.trim().toLowerCase();
-    if (await this.prisma.usuario.findUnique({ where: { email } })) {
-      throw conflito("email_em_uso", "Já existe um organizador com este e-mail.");
-    }
-    return this.emitir(email, nome, null);
+    return this.prisma.$transaction(async (tx) => {
+      if (await tx.usuario.findUnique({ where: { email } })) throw conflito("email_em_uso", "Já existe um organizador com este e-mail.");
+      const u = await tx.usuario.create({ data: { email, nome, papel: "ORGANIZADOR", senhaHash: null } });
+      const { token, expiraEm } = await this.convites.emitir(u.id, tx);
+      return { token, expiraEm: expiraEm.toISOString() };
+    });
   }
 
-  async trocaDeSenha(usuarioId: number): Promise<ConviteOrganizadorCriado> {
+  /** Novo link: convite (conta pendente) ou troca de senha (conta com senha). */
+  async reenviar(usuarioId: number): Promise<ConviteOrganizadorCriado> {
     const u = await this.prisma.usuario.findUnique({ where: { id: usuarioId } });
     if (!u) throw naoEncontrado("Organizador não encontrado.");
-    return this.emitir(u.email, u.nome, u.id);
+    if (!u.ativo) throw conflito("desativado", "Reative a conta antes de gerar um link.");
+    const { token, expiraEm } = await this.convites.emitir(u.id);
+    return { token, expiraEm: expiraEm.toISOString() };
   }
 
   async definirAtivo(adminId: number, usuarioId: number, ativo: boolean) {
@@ -61,51 +56,35 @@ export class OrganizadoresService {
     if (!u) throw naoEncontrado("Organizador não encontrado.");
     await this.prisma.$transaction([
       this.prisma.usuario.update({ where: { id: usuarioId }, data: { ativo } }),
-      // Desativar derruba as sessões e os convites pendentes na hora.
+      // Desativar derruba as sessões e os links pendentes na hora.
       ...(ativo
         ? []
         : [
             this.prisma.sessao.deleteMany({ where: { usuarioId } }),
-            this.prisma.conviteOrganizador.updateMany({ where: { email: u.email, usadoEm: null }, data: { expiraEm: new Date() } }),
+            this.prisma.conviteOrganizador.updateMany({ where: { usuarioId, usadoEm: null }, data: { usadoEm: new Date() } }),
           ]),
     ]);
   }
 
   // ---------- público (quem recebeu o link) ----------
 
-  private async conviteValido(token: string, ip: string) {
-    if (!(await this.limites.consumir(`convite-org:${agruparIp(ip)}`, CONVITE_MAX_POR_IP, CONVITE_JANELA_MS))) {
-      throw muitasTentativas("Muitas tentativas. Aguarde alguns minutos.");
-    }
-    if (!TOKEN_RE.test(token)) throw naoEncontrado("Convite inválido ou expirado.");
-    const c = await this.prisma.conviteOrganizador.findUnique({ where: { tokenHash: hashToken(token) } });
-    if (!c || c.usadoEm || c.expiraEm.getTime() <= Date.now()) throw naoEncontrado("Convite inválido ou expirado.");
-    return c;
-  }
-
   async verConvite(token: string, ip: string): Promise<ConviteOrganizadorPublico> {
-    const c = await this.conviteValido(token, ip);
-    return { email: c.email, nome: c.nome, tipo: c.usuarioId ? "troca" : "novo" };
+    const c = await this.convites.validar(token, ip);
+    return { email: c.usuario.email, nome: c.usuario.nome, tipo: c.usuario.senhaHash === null ? "novo" : "troca" };
   }
 
-  /** Cria a conta (ou troca a senha) e devolve o id para abrir a sessão. Uso único. */
+  /** Define a senha (e o nome, se for conta nova). Uso único; derruba sessões antigas. */
   async aceitar(token: string, nome: string, senha: string, ip: string): Promise<number> {
-    const c = await this.conviteValido(token, ip);
+    const c = await this.convites.validar(token, ip);
+    const novo = c.usuario.senhaHash === null;
+    const nomeFinal = novo && nome ? nome : c.usuario.nome;
+    exigirSenhaAceitavel(senha, { email: c.usuario.email, nome: nomeFinal });
     const senhaHash = await bcrypt.hash(senha, 12);
     return this.prisma.$transaction(async (tx) => {
-      // Consome o convite de forma atômica: dois envios simultâneos não criam duas contas.
-      const marcado = await tx.conviteOrganizador.updateMany({ where: { id: c.id, usadoEm: null }, data: { usadoEm: new Date() } });
-      if (marcado.count !== 1) throw naoEncontrado("Convite inválido ou expirado.");
-      if (c.usuarioId) {
-        const u = await tx.usuario.findUnique({ where: { id: c.usuarioId } });
-        if (!u || !u.ativo) throw naoEncontrado("Convite inválido ou expirado.");
-        await tx.usuario.update({ where: { id: u.id }, data: { senhaHash } });
-        await tx.sessao.deleteMany({ where: { usuarioId: u.id } });
-        return u.id;
-      }
-      if (await tx.usuario.findUnique({ where: { email: c.email } })) throw conflito("email_em_uso", "Já existe um organizador com este e-mail.");
-      const u = await tx.usuario.create({ data: { email: c.email, nome: nome || c.nome, senhaHash, papel: "ORGANIZADOR" } });
-      return u.id;
+      if (!(await this.convites.consumir(tx, c.id))) throw naoEncontrado("Convite inválido ou expirado.");
+      await tx.usuario.update({ where: { id: c.usuarioId }, data: { senhaHash, nome: nomeFinal } });
+      await tx.sessao.deleteMany({ where: { usuarioId: c.usuarioId } });
+      return c.usuarioId;
     });
   }
 }

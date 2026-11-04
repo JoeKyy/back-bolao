@@ -1,11 +1,10 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { Transform } from "class-transformer";
-import { IsBoolean, IsEmail, IsString, Matches, MaxLength, MinLength } from "class-validator";
+import { IsBoolean, IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
 import type { Request, Response } from "express";
 import { ipDe } from "../auth/auth.controller";
 import { AdminGuard, PapelAdminGuard, type RequestComAdmin } from "../auth/auth.guard";
 import { AuthService } from "../auth/auth.service";
-import { SENHA_MINIMA } from "../common/config";
 import { COOKIE_SESSAO, opcoesCookie } from "../common/cookies";
 import { Id } from "../common/id.pipe";
 import { OrganizadoresService } from "./organizadores.service";
@@ -27,10 +26,12 @@ class AtivoDto {
 }
 
 class AceitarDto {
-  @Transform(aparar) @IsString() @MinLength(2) @MaxLength(60) @Matches(SEM_CONTROLE)
-  nome!: string;
+  /** Só usado em conta nova (convite); na troca de senha o nome não muda. */
+  @IsOptional() @Transform(aparar) @IsString() @MinLength(2) @MaxLength(60) @Matches(SEM_CONTROLE)
+  nome?: string;
 
-  @IsString() @MinLength(SENHA_MINIMA) @MaxLength(200)
+  // Tamanho e conteúdo conferidos por exigirSenhaAceitavel (mensagem própria).
+  @IsString() @MaxLength(200)
   senha!: string;
 }
 
@@ -56,9 +57,10 @@ export class OrganizadoresController {
     await this.orgs.definirAtivo(req.adminId!, uid, dto.ativo);
   }
 
-  @Post(":uid/troca-senha")
-  trocaSenha(@Id("uid") uid: number) {
-    return this.orgs.trocaDeSenha(uid);
+  /** Novo link: convite (conta pendente) ou troca de senha (conta com senha). */
+  @Post(":uid/link")
+  link(@Id("uid") uid: number) {
+    return this.orgs.reenviar(uid);
   }
 }
 
@@ -78,7 +80,7 @@ export class ConviteOrganizadorController {
   @Post()
   @HttpCode(200)
   async aceitar(@Param("token") token: string, @Body() dto: AceitarDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const id = await this.orgs.aceitar(token, dto.nome, dto.senha, ipDe(req));
+    const id = await this.orgs.aceitar(token, dto.nome ?? "", dto.senha, ipDe(req));
     const { token: sessao, expiraEm } = await this.auth.abrirSessao(id);
     res.cookie(COOKIE_SESSAO, sessao, opcoesCookie(expiraEm.getTime() - Date.now()));
     return { ok: true };

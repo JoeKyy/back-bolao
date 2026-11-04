@@ -185,6 +185,8 @@ export interface OrganizadorDTO {
   email: string;
   papel: Papel;
   ativo: boolean;
+  /** Conta criada, convite ainda não aceito (sem senha). */
+  pendente: boolean;
   boloes: number;
   criadoEm: string;
 }

@@ -4,7 +4,10 @@ import { config } from "../common/config";
 import { muitasTentativas, naoAutenticado } from "../common/erros";
 import { LimitesService, agruparIp } from "../common/limites.service";
 import { TOKEN_RE, hashToken, novoTokenSecreto } from "../common/tokens";
+import { MailService } from "../mail/mail.service";
+import { ConvitesService } from "../organizadores/convites.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { exigirSenhaAceitavel } from "./senha";
 
 export const SESSAO_DIAS = 7;
 /** Sem uso por este tempo, a sessão cai mesmo dentro do prazo absoluto. */
@@ -30,6 +33,8 @@ export class AuthService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly limites: LimitesService,
+    private readonly convites: ConvitesService,
+    private readonly mail: MailService,
   ) {}
 
   /** Cria o organizador do .env no primeiro boot. Depois disso o .env não troca a senha. */
@@ -67,8 +72,9 @@ export class AuthService implements OnModuleInit {
 
     const usuario = await this.prisma.usuario.findUnique({ where: { email: email.trim().toLowerCase() } });
     const confere = await bcrypt.compare(senha, usuario?.senhaHash ?? HASH_FALSO);
-    // Conta desativada responde igual a senha errada: não revela quais contas existem.
-    if (!usuario || !confere || !usuario.ativo) {
+    // Conta desativada ou com convite pendente responde igual a senha errada: não revela quais
+    // contas existem.
+    if (!usuario || !usuario.senhaHash || !confere || !usuario.ativo) {
       await this.limites.registrar(CHAVE_FALHA_GLOBAL);
       throw naoAutenticado("E-mail ou senha incorretos.");
     }
@@ -139,10 +145,49 @@ export class AuthService implements OnModuleInit {
   /** Troca a senha e derruba todas as sessões do organizador (inclusive a atual). */
   async trocarSenha(usuarioId: number, atual: string, nova: string) {
     const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id: usuarioId } });
-    if (!(await bcrypt.compare(atual, u.senhaHash))) throw naoAutenticado("Senha atual incorreta.");
+    if (!u.senhaHash || !(await bcrypt.compare(atual, u.senhaHash))) throw naoAutenticado("Senha atual incorreta.");
+    exigirSenhaAceitavel(nova, { email: u.email, nome: u.nome });
     await this.prisma.$transaction([
       this.prisma.usuario.update({ where: { id: usuarioId }, data: { senhaHash: await bcrypt.hash(nova, 12) } }),
       this.prisma.sessao.deleteMany({ where: { usuarioId } }),
     ]);
+  }
+
+  /** Confere a senha atual sem trocar nada (para gerar códigos de recuperação). */
+  async conferirSenha(usuarioId: number, senha: string) {
+    const chave = `conferir:${usuarioId}`;
+    if (!(await this.limites.consumir(chave, LOGIN_MAX_POR_IP, LOGIN_JANELA_MS))) {
+      throw muitasTentativas("Muitas tentativas. Aguarde alguns minutos.");
+    }
+    const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id: usuarioId } });
+    if (!u.senhaHash || !(await bcrypt.compare(senha, u.senhaHash))) throw naoAutenticado("Senha atual incorreta.");
+    await this.limites.limpar(chave);
+  }
+
+  /**
+   * "Esqueci minha senha", como no gestor: resposta sempre igual, exista a conta ou não (não vira
+   * oráculo de quem tem conta). Se a conta existe e está ativa, emite um link de troca e manda
+   * por e-mail. Sem SMTP, o link não sai de lugar nenhum (nunca vai para o log).
+   */
+  async esqueci(email: string, ip: string) {
+    if (!(await this.limites.consumir(`esqueci:ip:${agruparIp(ip)}`, LOGIN_MAX_POR_IP, LOGIN_JANELA_MS))) {
+      throw muitasTentativas("Muitas tentativas. Aguarde alguns minutos.");
+    }
+    const normal = email.trim().toLowerCase();
+    // Teto por conta: 3 por hora, em silêncio (não protege a caixa de entrada de quem é alvo se responder diferente).
+    if (!(await this.limites.consumir(`esqueci:email:${normal}`, 3, 60 * 60 * 1000))) return;
+    const u = await this.prisma.usuario.findUnique({ where: { email: normal } });
+    if (!u || !u.ativo) return;
+    const { token } = await this.convites.emitir(u.id);
+    const link = `${config().appUrl}/organizador/${token}`;
+    await this.mail.enviar(
+      u.email,
+      "Bolão da Mega: definir nova senha",
+      [
+        `Olá, ${u.nome || "organizador"}. Alguém (esperamos que você) pediu para ${u.senhaHash ? "redefinir a senha" : "ativar a conta"} do Bolão da Mega.`,
+        "O link vale 7 dias e só pode ser usado uma vez. Se não foi você, ignore este e-mail: sua senha continua a mesma.",
+      ],
+      { texto: "Escolher nova senha", url: link },
+    );
   }
 }
