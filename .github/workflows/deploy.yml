@@ -4,6 +4,14 @@ name: Deploy
 # documentação ou de modelo de .env não dispara nada. Promova em LOTE (vários commits no dev, um
 # PR para homolog), em vez de um deploy por commit.
 on:
+  # Produção só por disparo manual na main, com a frase de confirmação (o plano gratuito do
+  # GitHub não oferece aprovação obrigatória em repositório privado). Homologação publica sozinha.
+  workflow_dispatch:
+    inputs:
+      confirmar:
+        description: 'Para publicar em PRODUÇÃO (branch main), digite: publicar producao'
+        required: false
+        default: ''
   push:
     branches: [main, homolog, dev]
     paths-ignore: ["**/*.md", "deploy/env.*.example", "auditoria-*/**"]
@@ -79,7 +87,7 @@ jobs:
 
   guarda:
     name: Origem do commit
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -108,16 +116,20 @@ jobs:
   deploy:
     name: Publicar na VPS
     needs: [verify, e2e, guarda]
+    # Homologação: push na branch homolog. Produção: disparo manual na main com a frase certa
+    # (e só se a origem do commit passou pela guarda).
     if: |
       always() && needs.verify.result == 'success' && needs.e2e.result == 'success'
-      && github.event_name == 'push'
       && (
-        github.ref == 'refs/heads/homolog'
-        || (github.ref == 'refs/heads/main' && needs.guarda.result == 'success')
+        (github.event_name == 'push' && github.ref == 'refs/heads/homolog')
+        || (
+          github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+          && inputs.confirmar == 'publicar producao' && needs.guarda.result == 'success'
+        )
       )
     runs-on: ubuntu-latest
-    # Os ambientes do GitHub guardam os segredos de cada destino. O de produção deve exigir
-    # aprovação manual do Joe (Settings > Environments > producao > Required reviewers).
+    # Os ambientes do GitHub guardam os segredos de cada destino. Produção só sai por disparo manual
+    # com confirmação (ver `on.workflow_dispatch`).
     environment: ${{ github.ref == 'refs/heads/main' && 'producao' || 'homologacao' }}
     env:
       AMBIENTE: ${{ github.ref == 'refs/heads/main' && 'producao' || 'homolog' }}
