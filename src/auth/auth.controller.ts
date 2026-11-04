@@ -56,8 +56,8 @@ export class AuthController {
 
   @Get("eu")
   @UseGuards(AdminGuard)
-  eu() {
-    return { organizador: true };
+  eu(@Req() req: RequestComAdmin) {
+    return this.auth.eu(req.adminId!);
   }
 
   @Post("senha")

@@ -141,8 +141,10 @@ export class PublicoService {
     };
   }
 
-  async painel(convite: string, dispositivo: string | undefined, ehOrganizador: boolean): Promise<PainelParticipante> {
+  /** `organizadorId`: quem está logado como organizador; só o DONO deste bolão tem a visão de organizador. */
+  async painel(convite: string, dispositivo: string | undefined, organizadorId: number | null): Promise<PainelParticipante> {
     const b0 = await this.bolaoDoConvite(convite);
+    const ehOrganizador = organizadorId !== null && b0.donoId === organizadorId;
     const meuId = await this.participanteDoAparelho(b0.id, dispositivo);
     if (!meuId && !ehOrganizador) throw naoAutenticado("Entre no bolão pelo link de convite.");
     const b = await carregarBolao(this.prisma, b0.id);

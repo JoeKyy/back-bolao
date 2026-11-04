@@ -42,6 +42,18 @@ Revisão independente sobre a reescrita. Reproduzidos pelo agente: SEC-01, 03, 0
 
 Dependências (`pnpm audit --prod`): no back, `multer` (sem upload no código) e `deepmerge-ts` (CLI do Prisma), sem caminho alcançável; reavaliar no próximo ciclo. Front sem alertas.
 
+## Vários organizadores (04/11/2026), branch `feat/varios-organizadores`
+
+Pedido do Joe: o criador do bolão é o tesoureiro; só ele registra o Pix, manda convites, confirma pagamentos, exporta e registra os jogos. Decisões tomadas por segurança (revisáveis): sem cadastro aberto; o ADMIN convida por link de uso único (7 dias); o ADMIN gerencia contas mas não vê os bolões dos outros.
+
+| ID | Item | Como | Evidência |
+|---|---|---|---|
+| ORG-01 | Dono do bolão | `Bolao.donoId`; migração escrita à mão passa os bolões existentes ao primeiro usuário e o promove a ADMIN (sem perda de dados, conferido no banco de dev). | migração `20261104033039_varios_organizadores` |
+| ORG-02 | Isolamento entre organizadores | `DonoDoBolaoGuard` em todas as rotas `boloes/:id` (404 se não for o dono, igual a inexistente); lista e criação filtradas por dono; visão de organizador no painel do participante só para o dono. | e2e: 14 rotas de outro organizador dão 404 e nada muda no bolão |
+| ORG-03 | Tesoureiro exclusivo | Planilha, folha, digitação, registro, pagamento, Pix e convite só com sessão do dono. | e2e "tesoureiro": participante e anônimo recebem 401 |
+| ORG-04 | Convite de organizador | Token de 32 bytes, só o hash no banco, 7 dias, uso único consumido de forma atômica (3 aceites simultâneos criam 1 conta), convite novo invalida o anterior, e-mail já cadastrado dá 409, senha 12+, limite de 20 por IP em 10 min. | e2e |
+| ORG-05 | Gestão de contas | Só ADMIN (`PapelAdminGuard`, 403 para organizador): convidar, desativar (sessões caem na hora, login responde igual a senha errada), reativar, link de troca de senha (derruba as sessões antigas). ADMIN não desativa a si mesmo. | e2e |
+
 ## Novos controles (entraram com a reescrita)
 
 - CSRF: escrita exige `X-Bolao: 1` e `Origin` na lista de `CORS_ORIGINS`; CORS só para essas origens, com credenciais.
@@ -60,7 +72,7 @@ Dependências (`pnpm audit --prod`): no back, `multer` (sem upload no código) e
 
 ## Evidências (04/11/2026, local)
 
-- `pnpm test`: 44 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 37 testes contra Postgres 16 real (`bolao_teste`), incluindo os da auditoria. `pnpm lint` e `tsc` sem problemas. `nest build` ok.
+- `pnpm test`: 44 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 47 testes contra Postgres 16 real (`bolao_teste`), incluindo os da auditoria. `pnpm lint` e `tsc` sem problemas. `nest build` ok.
 - Ponta a ponta com o front e importação real da Caixa (concurso 3080): prêmio de quina R$ 38.878,66 + quadra R$ 514,10 = R$ 39.392,76, igual ao calculado.
 
 ## Ambientes

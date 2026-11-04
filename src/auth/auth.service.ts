@@ -15,6 +15,11 @@ export const LOGIN_MAX_POR_IP = 5;
 export const LOGIN_MAX_GLOBAL = 30;
 const CHAVE_FALHA_GLOBAL = "login:falha";
 
+export interface SessaoValida {
+  id: number;
+  papel: "ADMIN" | "ORGANIZADOR";
+}
+
 // Hash fixo usado quando o e-mail não existe, para o tempo de resposta não revelar isso.
 const HASH_FALSO = bcrypt.hashSync("senha-que-nao-existe-em-lugar-nenhum", 12);
 
@@ -37,7 +42,7 @@ export class AuthService implements OnModuleInit {
       return;
     }
     await this.prisma.usuario.create({
-      data: { email: adminEmail, senhaHash: await bcrypt.hash(adminSenha, 12) },
+      data: { email: adminEmail, nome: "Administrador", papel: "ADMIN", senhaHash: await bcrypt.hash(adminSenha, 12) },
     });
     this.log.log("Organizador criado a partir do .env.");
   }
@@ -62,7 +67,8 @@ export class AuthService implements OnModuleInit {
 
     const usuario = await this.prisma.usuario.findUnique({ where: { email: email.trim().toLowerCase() } });
     const confere = await bcrypt.compare(senha, usuario?.senhaHash ?? HASH_FALSO);
-    if (!usuario || !confere) {
+    // Conta desativada responde igual a senha errada: não revela quais contas existem.
+    if (!usuario || !confere || !usuario.ativo) {
       await this.limites.registrar(CHAVE_FALHA_GLOBAL);
       throw naoAutenticado("E-mail ou senha incorretos.");
     }
@@ -88,10 +94,18 @@ export class AuthService implements OnModuleInit {
   }
 
   /** Devolve o id do organizador da sessão, ou null. Sessão vencida ou ociosa é apagada. */
-  async validar(token: string | undefined): Promise<number | null> {
+  /** Organizador da sessão (id e papel), ou null. Sessão vencida, ociosa ou de conta desativada cai. */
+  async validar(token: string | undefined): Promise<SessaoValida | null> {
     if (!token || token.length > 100) return null;
-    const s = await this.prisma.sessao.findUnique({ where: { tokenHash: hashToken(token) } });
+    const s = await this.prisma.sessao.findUnique({
+      where: { tokenHash: hashToken(token) },
+      include: { usuario: { select: { papel: true, ativo: true } } },
+    });
     if (!s) return null;
+    if (!s.usuario.ativo) {
+      await this.prisma.sessao.deleteMany({ where: { usuarioId: s.usuarioId } });
+      return null;
+    }
     const agora = Date.now();
     if (s.expiraEm.getTime() <= agora || agora - s.ultimoUsoEm.getTime() > SESSAO_OCIOSA_MS) {
       await this.prisma.sessao.deleteMany({ where: { id: s.id } });
@@ -101,7 +115,20 @@ export class AuthService implements OnModuleInit {
     if (agora - s.ultimoUsoEm.getTime() > 60_000) {
       await this.prisma.sessao.update({ where: { id: s.id }, data: { ultimoUsoEm: new Date() } });
     }
-    return s.usuarioId;
+    return { id: s.usuarioId, papel: s.usuario.papel };
+  }
+
+  async eu(id: number) {
+    const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id } });
+    return { id: u.id, nome: u.nome, email: u.email, papel: u.papel };
+  }
+
+  /** Cria a sessão de quem acabou de definir a senha pelo convite. */
+  async abrirSessao(usuarioId: number): Promise<{ token: string; expiraEm: Date }> {
+    const token = novoTokenSecreto();
+    const expiraEm = new Date(Date.now() + SESSAO_DIAS * 24 * 60 * 60 * 1000);
+    await this.prisma.sessao.create({ data: { tokenHash: hashToken(token), usuarioId, expiraEm } });
+    return { token, expiraEm };
   }
 
   async sair(token: string | undefined) {

@@ -1,12 +1,15 @@
 import { Controller, Get, Injectable, Logger, Module, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { AuthController } from "./auth/auth.controller";
-import { AdminGuard } from "./auth/auth.guard";
+import { AdminGuard, PapelAdminGuard } from "./auth/auth.guard";
 import { AuthService } from "./auth/auth.service";
 import { BoloesController } from "./boloes/boloes.controller";
 import { BoloesService } from "./boloes/boloes.service";
+import { DonoDoBolaoGuard } from "./boloes/dono.guard";
 import { CaixaService } from "./caixa/caixa.service";
 import { LimitesModule, LimitesService } from "./common/limites.service";
 import { PrismaModule, PrismaService } from "./prisma/prisma.service";
+import { ConviteOrganizadorController, OrganizadoresController } from "./organizadores/organizadores.controller";
+import { OrganizadoresService } from "./organizadores/organizadores.service";
 import { PublicoController } from "./publico/publico.controller";
 import { PublicoService } from "./publico/publico.service";
 import contrato from "./shared/contrato.json";
@@ -56,7 +59,7 @@ class Varredura implements OnModuleInit, OnModuleDestroy {
 
 @Module({
   imports: [PrismaModule, LimitesModule],
-  controllers: [SaudeController, AuthController, BoloesController, PublicoController],
-  providers: [AuthService, AdminGuard, BoloesService, CaixaService, PublicoService, Varredura],
+  controllers: [SaudeController, AuthController, BoloesController, PublicoController, OrganizadoresController, ConviteOrganizadorController],
+  providers: [AuthService, AdminGuard, PapelAdminGuard, DonoDoBolaoGuard, OrganizadoresService, BoloesService, CaixaService, PublicoService, Varredura],
 })
 export class AppModule {}

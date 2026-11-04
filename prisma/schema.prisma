@@ -10,14 +10,43 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// O organizador. Hoje existe um só, criado no primeiro boot a partir do .env.
+enum Papel {
+  ADMIN
+  ORGANIZADOR
+}
+
+/// Organizador (tesoureiro dos próprios bolões). O primeiro, criado no boot a partir do .env,
+/// é ADMIN: além dos bolões dele, convida, desativa e gera troca de senha de organizadores.
+/// O ADMIN NÃO enxerga os bolões dos outros.
 model Usuario {
   id        Int                   @id @default(autoincrement())
   email     String                @unique
+  nome      String                @default("")
+  papel     Papel                 @default(ORGANIZADOR)
+  ativo     Boolean               @default(true)
   senhaHash String
   criadoEm  DateTime              @default(now())
   sessoes   Sessao[]
   aparelhos AparelhoOrganizador[]
+  boloes    Bolao[]
+  convites  ConviteOrganizador[]  @relation("ConvitesDoUsuario")
+}
+
+/// Link de uso único para criar conta de organizador (ou trocar a senha de uma existente).
+/// No banco só o sha256 do token.
+model ConviteOrganizador {
+  id        Int       @id @default(autoincrement())
+  tokenHash String    @unique
+  email     String
+  nome      String    @default("")
+  /// Preenchido quando é troca de senha de uma conta que já existe.
+  usuarioId Int?
+  usuario   Usuario?  @relation("ConvitesDoUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+  criadoEm  DateTime  @default(now())
+  expiraEm  DateTime
+  usadoEm   DateTime?
+
+  @@index([email])
 }
 
 /// Aparelho onde o organizador já entrou com sucesso (cookie aleatório; aqui só o sha256).
@@ -66,6 +95,9 @@ enum FonteResultado {
 
 model Bolao {
   id                     Int             @id @default(autoincrement())
+  /// O tesoureiro: único que configura Pix, convida, confirma pagamento, exporta e registra.
+  donoId                 Int
+  dono                   Usuario         @relation(fields: [donoId], references: [id], onDelete: Restrict)
   nome                   String
   tipo                   TipoBolao       @default(NORMAL)
   /// Token do link de convite. Gerar outro invalida o link antigo.
@@ -93,6 +125,8 @@ model Bolao {
   participantes          Participante[]
   jogos                  Jogo[]
   eventos                Evento[]
+
+  @@index([donoId])
 }
 
 model Participante {

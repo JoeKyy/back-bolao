@@ -62,8 +62,8 @@ export class PublicoController {
 
   @Get("painel")
   async painel(@Param("convite") convite: string, @Req() req: Request) {
-    const organizador = (await this.auth.validar(lerCookie(req, COOKIE_SESSAO))) !== null;
-    return this.publico.painel(convite, lerCookie(req, COOKIE_DISPOSITIVO), organizador);
+    const sessao = await this.auth.validar(lerCookie(req, COOKIE_SESSAO));
+    return this.publico.painel(convite, lerCookie(req, COOKIE_DISPOSITIVO), sessao?.id ?? null);
   }
 
   @Post("jogos")

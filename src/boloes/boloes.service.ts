@@ -38,8 +38,10 @@ export class BoloesService {
     private readonly caixa: CaixaService,
   ) {}
 
-  async listar(): Promise<BolaoNaLista[]> {
+  /** Só os bolões do organizador (tesoureiro). */
+  async listar(donoId: number): Promise<BolaoNaLista[]> {
     const bs = await this.prisma.bolao.findMany({
+      where: { donoId },
       orderBy: { id: "desc" },
       include: { participantes: true, jogos: true },
     });
@@ -60,11 +62,12 @@ export class BoloesService {
     });
   }
 
-  async criar(dto: CriarBolaoDto): Promise<{ id: number }> {
+  async criar(dto: CriarBolaoDto, donoId: number): Promise<{ id: number }> {
     const virada = dto.tipo === "VIRADA";
     const b = await this.prisma.$transaction(async (tx) => {
       const criado = await tx.bolao.create({
         data: {
+          donoId,
           nome: dto.nome,
           tipo: dto.tipo,
           convite: novoConvite(),

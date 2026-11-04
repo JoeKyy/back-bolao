@@ -167,3 +167,36 @@ export interface EventoDTO {
   descricao: string;
   criadoEm: string;
 }
+
+export type Papel = "ADMIN" | "ORGANIZADOR";
+
+/** Organizador logado. */
+export interface Eu {
+  id: number;
+  nome: string;
+  email: string;
+  papel: Papel;
+}
+
+/** Visão do ADMIN sobre as contas (sem nada dos bolões dos outros além da contagem). */
+export interface OrganizadorDTO {
+  id: number;
+  nome: string;
+  email: string;
+  papel: Papel;
+  ativo: boolean;
+  boloes: number;
+  criadoEm: string;
+}
+
+/** Convite gerado: o token aparece UMA vez, para o ADMIN repassar. */
+export interface ConviteOrganizadorCriado {
+  token: string;
+  expiraEm: string;
+}
+
+export interface ConviteOrganizadorPublico {
+  email: string;
+  nome: string;
+  tipo: "novo" | "troca";
+}

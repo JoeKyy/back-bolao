@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, HttpCode, Patch, Post, Query, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
-import { AdminGuard } from "../auth/auth.guard";
+import { AdminGuard, type RequestComAdmin } from "../auth/auth.guard";
+import { DonoDoBolaoGuard } from "./dono.guard";
 import { CaixaService } from "../caixa/caixa.service";
 import { Id } from "../common/id.pipe";
 import { BoloesService } from "./boloes.service";
@@ -21,9 +22,9 @@ import {
 const Confirmar = () => Query("confirmar");
 const sim = (v: unknown) => v === "1";
 
-/** Tudo aqui exige sessão do organizador. */
+/** Tudo aqui exige sessão de organizador, e as rotas com :id exigem ser o dono do bolão. */
 @Controller()
-@UseGuards(AdminGuard)
+@UseGuards(AdminGuard, DonoDoBolaoGuard)
 export class BoloesController {
   constructor(
     private readonly boloes: BoloesService,
@@ -31,13 +32,13 @@ export class BoloesController {
   ) {}
 
   @Get("boloes")
-  listar() {
-    return this.boloes.listar();
+  listar(@Req() req: RequestComAdmin) {
+    return this.boloes.listar(req.adminId!);
   }
 
   @Post("boloes")
-  criar(@Body() dto: CriarBolaoDto) {
-    return this.boloes.criar(dto);
+  criar(@Body() dto: CriarBolaoDto, @Req() req: RequestComAdmin) {
+    return this.boloes.criar(dto, req.adminId!);
   }
 
   @Get("boloes/:id")
