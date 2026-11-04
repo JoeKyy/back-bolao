@@ -1,0 +1,8 @@
+allowBuilds:
+  "@prisma/client": true
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true
+  # Aprovar script de instalação de dependência transitiva é superfície de supply chain desnecessária.
+  unrs-resolver: false
+  "@parcel/watcher": false

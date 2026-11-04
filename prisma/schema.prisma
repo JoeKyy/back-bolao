@@ -1,0 +1,141 @@
+// Bolão da Mega. Dinheiro sempre em centavos (Int cobre até R$ 21 milhões por campo;
+// prêmios usam BigInt porque a Virada passa de R$ 1 bilhão).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// O organizador. Hoje existe um só, criado no primeiro boot a partir do .env.
+model Usuario {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  senhaHash String
+  criadoEm  DateTime @default(now())
+  sessoes   Sessao[]
+}
+
+/// Sessão do organizador. O cookie leva um token aleatório; aqui fica só o sha256 dele (BOL-02).
+model Sessao {
+  id          Int      @id @default(autoincrement())
+  tokenHash   String   @unique
+  usuarioId   Int
+  usuario     Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  criadoEm    DateTime @default(now())
+  expiraEm    DateTime
+  ultimoUsoEm DateTime @default(now())
+
+  @@index([usuarioId])
+}
+
+/// Contagem de tentativas para limites (login, inscrição). Persistente: reiniciar não zera (BOL-01).
+model Tentativa {
+  id       Int      @id @default(autoincrement())
+  chave    String
+  criadoEm DateTime @default(now())
+
+  @@index([chave, criadoEm])
+}
+
+enum TipoBolao {
+  VIRADA
+  NORMAL
+}
+
+enum FonteResultado {
+  caixa
+  manual
+}
+
+model Bolao {
+  id                     Int             @id @default(autoincrement())
+  nome                   String
+  tipo                   TipoBolao       @default(NORMAL)
+  /// Token do link de convite. Gerar outro invalida o link antigo.
+  convite                String          @unique
+  concurso               Int?
+  dataSorteio            DateTime?
+  /// Preço da aposta simples (6 dezenas), em centavos. Editável caso a Caixa reajuste.
+  precoSimples           Int             @default(600)
+  maxDezenasParticipante Int             @default(10)
+  maxParticipantes       Int             @default(200)
+  inscricoesAbertas      Boolean         @default(true)
+  instrucoes             String          @default("")
+  pixChave               String?
+  pixNome                String?
+  pixCidade              String?
+  /// Prêmio estimado (centavos) usado na calculadora.
+  estimativaPremio       BigInt?
+  resultadoDezenas       Int[]
+  premioSena             BigInt?
+  premioQuina            BigInt?
+  premioQuadra           BigInt?
+  resultadoFonte         FonteResultado?
+  resultadoEm            DateTime?
+  criadoEm               DateTime        @default(now())
+  participantes          Participante[]
+  jogos                  Jogo[]
+  eventos                Evento[]
+}
+
+model Participante {
+  id           Int                @id @default(autoincrement())
+  bolaoId      Int
+  bolao        Bolao              @relation(fields: [bolaoId], references: [id], onDelete: Cascade)
+  nome         String
+  whatsapp     String             @default("")
+  /// Quanto o organizador confirmou ter recebido (centavos).
+  valorPago    Int                @default(0)
+  pagoEm       DateTime?
+  criadoEm     DateTime           @default(now())
+  jogos        Jogo[]
+  dispositivos DispositivoAcesso[]
+
+  @@index([bolaoId])
+}
+
+/// Liga o aparelho do participante (cookie aleatório; aqui só o sha256) ao cadastro dele.
+model DispositivoAcesso {
+  id             Int          @id @default(autoincrement())
+  tokenHash      String
+  participanteId Int
+  participante   Participante @relation(fields: [participanteId], references: [id], onDelete: Cascade)
+  criadoEm       DateTime     @default(now())
+
+  @@unique([tokenHash, participanteId])
+  @@index([tokenHash])
+}
+
+model Jogo {
+  id             Int          @id @default(autoincrement())
+  bolaoId        Int
+  bolao          Bolao        @relation(fields: [bolaoId], references: [id], onDelete: Cascade)
+  participanteId Int
+  participante   Participante @relation(fields: [participanteId], references: [id], onDelete: Cascade)
+  dezenas        Int[]
+  surpresinha    Boolean      @default(false)
+  /// Marcado pelo organizador depois de registrar o jogo na Caixa. Só jogo registrado é conferido.
+  registrado     Boolean      @default(false)
+  comprovante    String?
+  criadoEm       DateTime     @default(now())
+
+  @@index([bolaoId])
+  @@index([participanteId])
+}
+
+/// Histórico do que mexe com dinheiro e resultado (BOL-04).
+model Evento {
+  id        Int      @id @default(autoincrement())
+  bolaoId   Int
+  bolao     Bolao    @relation(fields: [bolaoId], references: [id], onDelete: Cascade)
+  tipo      String
+  descricao String
+  dados     Json?
+  criadoEm  DateTime @default(now())
+
+  @@index([bolaoId, criadoEm])
+}
