@@ -43,12 +43,18 @@ function repeticaoOuSequencia(n: string): boolean {
   return n.length >= 8 && sequencias.includes(n);
 }
 
+export const SENHA_MAXIMA = 128;
+
 export type ContextoSenha = { email?: string | null; nome?: string | null };
 
 /** Recusa (400, mensagem fixa) senha curta, comum, sequência, ou igual ao nome/e-mail. */
 export function exigirSenhaAceitavel(senha: string, contexto: ContextoSenha = {}): void {
   if (senha.length < SENHA_MINIMA) throw invalido("senha_curta", `A senha precisa de pelo menos ${SENHA_MINIMA} caracteres.`);
-  if (senha.length > 200) throw invalido("senha_longa", "A senha pode ter no máximo 200 caracteres.");
+  // RVAL-02: o login cifra a senha com RSA-OAEP/SHA-256 de 2048 bits, que aceita no máximo 190
+  // bytes. Uma senha maior seria aceita no cadastro e nunca mais entraria. Limite em bytes UTF-8.
+  if (senha.length > SENHA_MAXIMA || Buffer.byteLength(senha, "utf8") > 190) {
+    throw invalido("senha_longa", `A senha pode ter no máximo ${SENHA_MAXIMA} caracteres.`);
+  }
   const n = normalizar(senha);
   const semNumerosNoFim = n.replace(/[0-9]+$/, "");
   if (

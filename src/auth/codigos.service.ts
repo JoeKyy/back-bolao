@@ -4,6 +4,7 @@ import { createHash, randomInt } from "node:crypto";
 import { muitasTentativas, naoAutenticado } from "../common/erros";
 import { LimitesService, agruparIp } from "../common/limites.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { ConvitesService } from "../usuarios/convites.service";
 import { exigirSenhaAceitavel } from "./senha";
 
 export const QUANTIDADE_DE_CODIGOS = 8;
@@ -33,6 +34,7 @@ export class CodigosService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly limites: LimitesService,
+    private readonly convites: ConvitesService,
   ) {}
 
   async gerar(usuarioId: number): Promise<string[]> {
@@ -40,6 +42,8 @@ export class CodigosService {
     await this.prisma.$transaction([
       this.prisma.codigoRecuperacao.deleteMany({ where: { usuarioId } }),
       this.prisma.codigoRecuperacao.createMany({ data: codigos.map((c) => ({ usuarioId, codigoHash: hashCodigo(c) })) }),
+      // RVAL-04: gerar códigos dá acesso reserva à conta; fica na trilha que a pessoa vê.
+      this.prisma.eventoConta.create({ data: { usuarioId, porId: null, tipo: "codigos_gerados", descricao: "Novos códigos de recuperação gerados (os anteriores deixaram de valer)." } }),
     ]);
     return codigos;
   }
@@ -66,6 +70,8 @@ export class CodigosService {
       if (ok.count === 0) throw invalido;
       await tx.usuario.update({ where: { id: u.id }, data: { senhaHash } });
       await tx.sessao.deleteMany({ where: { usuarioId: u.id } });
+      await this.convites.revogarTodos(tx, u.id); // RVAL-03
+      await tx.eventoConta.create({ data: { usuarioId: u.id, porId: null, tipo: "senha_por_codigo", descricao: "Senha trocada com um código de recuperação. Se não foi você, avise o administrador." } });
       return u.id;
     });
   }

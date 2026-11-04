@@ -102,6 +102,26 @@ Relatório em `../auditoria-2026-11-04/RELATORIO.md`. Corrigidos na branch `feat
 
 SEC-06, BOL-01, SEC-05, SEC-01, SEC-04 e ORG-05 foram reabertos pela auditoria e estão cobertos pelas linhas acima.
 
+## Revalidação independente (04/11/2026): resultado e correções
+
+Relatório em `../auditoria-2026-11-04-revalidacao/REVALIDACAO.md`: dos 65 itens, 45 corrigidos, 9 parciais e 11 abertos; **nenhum bloqueador de código** para a homologação (os bloqueios são de infraestrutura). BAUD-06 no cenário 10x: memória de 525 MB (2 listas) e 1.989 MB (30 listas) caiu para 105 MB e 111 MB. Achados novos, corrigidos na branch `fix/revalidacao`:
+
+| ID | Gravidade | Correção | Local | Homolog | Produção |
+|---|---|---|---|---|---|
+| RVAL-01 | Média | Participação guardada em uma conta não é herdada por outra conta logada no mesmo aparelho (painel, Pix e jogos). | testado | pendente | pendente |
+| RVAL-02 | Média | Senha de 1 a 128 caracteres e no máximo 190 bytes (limite do RSA-OAEP do login); a mensagem aparece na tela. | testado | pendente | pendente |
+| RVAL-03 | Média | Trocar senha por qualquer caminho (troca, código, link) revoga os links de convite pendentes. | testado | pendente | pendente |
+| RVAL-04 | Média | Códigos gerados, senha por código e "esqueci minha senha" entram na atividade da conta. | testado | pendente | pendente |
+| RVAL-05 | Baixa | Administrador com convite pendente não conta como administrador que sobra. | testado | pendente | pendente |
+| RVAL-06 | Média | "Buscar na Caixa" ignora o cache de 10 min (intervalo mínimo de 30 s); resolve o resíduo do BAUD-05. | testado (unitário com relógio simulado) | pendente | pendente |
+| RVAL-07 | Baixa | "Esqueci minha senha" não invalida o link que o administrador gerou. | testado | pendente | pendente |
+| RVAL-08 | Baixa | "Esqueci" responde sem esperar a busca nem o envio (tempo uniforme); o link sai em segundo plano. Não medido contra SMTP real. | parcial | pendente | pendente |
+| RVAL-09 | Média | `/participacoes` por agregação no banco (como o BAUD-06), máximo de 50. | testado | pendente | pendente |
+| RVAL-10 | Baixa | A mesma cifra do login não vale duas vezes (10 min, em memória, uma instância). | testado | pendente | pendente |
+| BAUD-03 (resíduo) | Média | Com a Caixa disponível, concurso já apurado é recusado na criação. Não coberto por teste automático (a Caixa fica desligada nos testes). | parcial | pendente | pendente |
+
+Aberto: o aceite do convite deixa a pessoa trocar o nome definido pelo administrador (aceito: é o nome dela). BAUD-06: a meta de p95 abaixo de 200 ms com 30 listas simultâneas não foi atingida (577 ms com 10, 1,1 s com 30 em rajada, ainda abaixo dos 1,4 s anteriores); medir de novo na VPS, dentro do limite de memória do container. GitGuardian (04/11): dois alertas "Generic Password" nos commits `7bc60c9` e `af8576d` são falsos positivos (exemplo `smtps://usuario:senha@...` em comentário e o Postgres descartável do CI); os exemplos foram trocados por placeholders e a senha do banco de teste da esteira passou a ser única por execução. Marcar os incidentes como falso positivo no painel do GitGuardian.
+
 ## Novos controles (entraram com a reescrita)
 
 - CSRF: escrita exige `X-Bolao: 1` e `Origin` na lista de `CORS_ORIGINS`; CORS só para essas origens, com credenciais.
@@ -120,7 +140,7 @@ SEC-06, BOL-01, SEC-05, SEC-01, SEC-04 e ORG-05 foram reabertos pela auditoria e
 
 ## Evidências (04/11/2026, local)
 
-- `pnpm test`: 44 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 68 testes contra Postgres 16 real (`bolao_teste`), incluindo os da auditoria. `pnpm lint` e `tsc` sem problemas. `nest build` ok.
+- `pnpm test`: 44 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 75 testes contra Postgres 16 real (`bolao_teste`), incluindo os da auditoria. `pnpm lint` e `tsc` sem problemas. `nest build` ok.
 - Ponta a ponta com o front e importação real da Caixa (concurso 3080): prêmio de quina R$ 38.878,66 + quadra R$ 514,10 = R$ 39.392,76, igual ao calculado.
 
 ## Ambientes

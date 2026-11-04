@@ -21,11 +21,16 @@ export class ConvitesService {
     private readonly limites: LimitesService,
   ) {}
 
-  async emitir(usuarioId: number, tx?: Tx): Promise<{ token: string; expiraEm: Date }> {
+  /**
+   * `revogarAnteriores` (padrão): o link novo invalida os vivos da conta, como o gestor. O
+   * "esqueci minha senha" usa false (RVAL-07): senão qualquer pessoa que saiba o e-mail anularia
+   * o link que o administrador acabou de gerar.
+   */
+  async emitir(usuarioId: number, tx?: Tx, revogarAnteriores = true): Promise<{ token: string; expiraEm: Date }> {
     const token = novoTokenSecreto();
     const expiraEm = new Date(Date.now() + CONVITE_DIAS * 24 * 60 * 60 * 1000);
     const gravar = async (db: Tx) => {
-      await db.conviteOrganizador.updateMany({ where: { usuarioId, usadoEm: null }, data: { usadoEm: new Date() } });
+      if (revogarAnteriores) await db.conviteOrganizador.updateMany({ where: { usuarioId, usadoEm: null }, data: { usadoEm: new Date() } });
       await db.conviteOrganizador.create({ data: { tokenHash: hashToken(token), usuarioId, expiraEm } });
     };
     if (tx) await gravar(tx);
@@ -42,6 +47,11 @@ export class ConvitesService {
     const c = await this.prisma.conviteOrganizador.findUnique({ where: { tokenHash: hashToken(token) }, include: { usuario: true } });
     if (!c || c.usadoEm || c.expiraEm.getTime() <= Date.now() || !c.usuario.ativo) throw naoEncontrado("Convite inválido ou expirado.");
     return c;
+  }
+
+  /** Revoga todos os links vivos da conta: trocar a senha por qualquer caminho encerra os pendentes (RVAL-03). */
+  async revogarTodos(tx: Tx, usuarioId: number) {
+    await tx.conviteOrganizador.updateMany({ where: { usuarioId, usadoEm: null }, data: { usadoEm: new Date() } });
   }
 
   /** Marca como usado de forma atômica; false se outro pedido usou antes. */

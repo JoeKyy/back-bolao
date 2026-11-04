@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { constants, generateKeyPairSync, privateDecrypt } from "node:crypto";
+import { constants, createHash, generateKeyPairSync, privateDecrypt } from "node:crypto";
 
 /**
  * Como no gestor: par RSA gerado em memória a cada subida da API (nunca em disco nem no .env).
@@ -20,10 +20,18 @@ export class LoginCriptoService {
     return this.par.publicKey;
   }
 
-  /** Lança se o texto não foi cifrado com a chave atual. */
+  /** Cifras já usadas (sha256 -> quando expira). RVAL-10: o mesmo envio não vale duas vezes. */
+  private readonly usadas = new Map<string, number>();
+
+  /** Lança se o texto não foi cifrado com a chave atual, ou se a mesma cifra já foi usada. */
   decifrar(base64: string): string {
     const buf = Buffer.from(base64, "base64");
     if (buf.length !== 256) throw new Error("tamanho inválido");
+    const agora = Date.now();
+    for (const [h, ate] of this.usadas) if (ate <= agora) this.usadas.delete(h);
+    const marca = createHash("sha256").update(buf).digest("hex");
+    if (this.usadas.has(marca)) throw new Error("cifra repetida");
+    this.usadas.set(marca, agora + 10 * 60 * 1000);
     return privateDecrypt({ key: this.par.privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, buf).toString("utf8");
   }
 }

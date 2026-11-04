@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { Bolao } from "@prisma/client";
-import { conflito, invalido, naoEncontrado } from "../common/erros";
+import { ErroNegocio, conflito, invalido, naoEncontrado } from "../common/erros";
 import { novoConvite } from "../common/tokens";
 import { CaixaService } from "../caixa/caixa.service";
 import { normalizarChave } from "../pix/pix";
@@ -87,8 +87,26 @@ export class BoloesService {
     }));
   }
 
+  /**
+   * BAUD-03 (resíduo): com a Caixa disponível, recusa concurso que já foi apurado. Sem isso, dava
+   * para criar um bolão de concurso já sorteado com uma data futura digitada e aceitar apostas.
+   * Se a consulta falhar, não bloqueia (a data do sorteio continua sendo a trava).
+   */
+  private async exigirConcursoFuturo(concurso: number | null | undefined) {
+    if (!concurso) return;
+    try {
+      const ultimo = await this.caixa.concurso();
+      if (ultimo && concurso <= ultimo.numero) {
+        throw invalido("concurso_ja_sorteado", `O concurso ${concurso} já foi sorteado (o último apurado é o ${ultimo.numero}). Informe um concurso futuro.`);
+      }
+    } catch (e) {
+      if (e instanceof ErroNegocio && e.getStatus() === 400) throw e;
+    }
+  }
+
   async criar(dto: CriarBolaoDto, donoId: number): Promise<{ id: number }> {
     const virada = dto.tipo === "VIRADA";
+    if (!virada) await this.exigirConcursoFuturo(dto.concurso);
     let dataSorteio: Date | null = virada ? VIRADA_2026.dataSorteio : null;
     if (!virada) {
       dataSorteio = dto.dataSorteio ? new Date(dto.dataSorteio) : null;
@@ -401,7 +419,7 @@ export class BoloesService {
     if (b.resultadoDezenas.length === 6) exigirConfirmacao(b, confirmar);
     const numero = concursoPedido ?? b.concurso ?? undefined;
     if (!numero) throw invalido("sem_concurso", "Informe o número do concurso do bolão antes de buscar na Caixa.");
-    const c = await this.caixa.concurso(numero);
+    const c = await this.caixa.concurso(numero, true);
     if (!c) throw conflito("sem_resultado", "A Caixa ainda não publicou o resultado desse concurso.");
     // BAUD-05: logo depois do sorteio a Caixa publica as dezenas antes do rateio. Faixa com
     // ganhadores e valor zero, ou nenhum ganhador em lugar nenhum, é resultado incompleto: não

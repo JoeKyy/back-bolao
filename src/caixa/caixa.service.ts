@@ -78,15 +78,20 @@ export function lerConcursoCaixa(j: unknown): ConcursoCaixa | null {
 @Injectable()
 export class CaixaService {
   private readonly log = new Logger("Caixa");
-  private readonly cache = new Map<string, { ate: number; valor: ConcursoCaixa | null }>();
+  private readonly cache = new Map<string, { ate: number; em: number; valor: ConcursoCaixa | null }>();
 
   /** Último concurso (sem número) ou um concurso específico. null quando ainda não saiu. */
-  async concurso(numero?: number): Promise<ConcursoCaixa | null> {
+  /**
+   * `fresco`: busca explícita do organizador. Ignora o cache de 10 min, para que "tentar de novo"
+   * depois de um resultado incompleto (RVAL-06) enxergue o rateio publicado, mas respeita um
+   * intervalo mínimo de 30 s por concurso para não martelar a API da Caixa.
+   */
+  async concurso(numero?: number, fresco = false): Promise<ConcursoCaixa | null> {
     const base = config().caixaApiUrl;
     if (!base) throw new ErroNegocio(HttpStatus.SERVICE_UNAVAILABLE, "caixa_desligada", "Consulta à Caixa desligada.");
     const chave = numero ? String(numero) : "ultimo";
     const c = this.cache.get(chave);
-    if (c && c.ate > Date.now()) return c.valor;
+    if (c && c.ate > Date.now() && (!fresco || Date.now() - c.em < 30_000)) return c.valor;
 
     const url = numero ? `${base}/${numero}` : base;
     let valor: ConcursoCaixa | null;
@@ -111,7 +116,7 @@ export class CaixaService {
         "Não foi possível consultar a Caixa agora. Tente mais tarde ou informe o resultado à mão.",
       );
     }
-    this.cache.set(chave, { ate: Date.now() + CACHE_MS, valor });
+    this.cache.set(chave, { ate: Date.now() + CACHE_MS, em: Date.now(), valor });
     return valor;
   }
 }

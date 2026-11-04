@@ -55,7 +55,8 @@ jobs:
         image: postgres:16-alpine
         env:
           POSTGRES_USER: bolao
-          POSTGRES_PASSWORD: bolao
+          # Banco descartável do runner; a senha é única por execução (nada fixo no repositório).
+          POSTGRES_PASSWORD: ci${{ github.run_id }}${{ github.run_attempt }}
           POSTGRES_DB: bolao_teste
         ports: ["5432:5432"]
         options: >-
@@ -64,7 +65,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      TEST_DATABASE_URL: postgresql://bolao:bolao@localhost:5432/bolao_teste?schema=public
+      TEST_DATABASE_URL: postgresql://bolao:ci${{ github.run_id }}${{ github.run_attempt }}@localhost:5432/bolao_teste?schema=public
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

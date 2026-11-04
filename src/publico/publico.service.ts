@@ -8,6 +8,7 @@ import { formatDezena, precoJogo, validarDezenas } from "../shared/regras";
 import type { ConvitePublico, JogoDTO, PainelParticipante, ParticipacaoDTO, ParticipanteDTO } from "../shared/tipos";
 import { aceitaApostas, exigirDentroDoTeto, bolaoDTO, carregarBolao, registrarEvento, resumoDe, travarBolao, type BolaoCompleto } from "../boloes/carregar";
 import { MAX_JOGOS_POR_BOLAO } from "../boloes/boloes.service";
+import { situacaoDe } from "../boloes/resumo";
 
 export const INSCRICAO_JANELA_MS = 10 * 60 * 1000;
 export const INSCRICAO_MAX_POR_IP = 10;
@@ -44,13 +45,22 @@ export class PublicoService {
       const p = await this.prisma.participante.findFirst({ where: { bolaoId, usuarioId: quem.usuarioId }, select: { id: true } });
       if (p) return p.id;
     }
-    return this.participanteDoAparelho(bolaoId, quem.dispositivo);
+    return this.participanteDoAparelho(bolaoId, quem.dispositivo, quem.usuarioId ?? null);
   }
 
-  private async participanteDoAparelho(bolaoId: number, dispositivo: string | undefined) {
+  /**
+   * Participante deste bolão ligado ao aparelho. RVAL-01: se a participação já está guardada em
+   * uma conta, só essa conta a enxerga por aqui; outra conta logada no mesmo aparelho não herda
+   * (o painel, o Pix e os jogos são de quem guardou). Sem login, o aparelho que criou continua
+   * valendo.
+   */
+  private async participanteDoAparelho(bolaoId: number, dispositivo: string | undefined, usuarioId: number | null = null) {
     if (!dispositivo || !TOKEN_RE.test(dispositivo)) return null;
     const d = await this.prisma.dispositivoAcesso.findFirst({
-      where: { tokenHash: hashToken(dispositivo), participante: { bolaoId } },
+      where: {
+        tokenHash: hashToken(dispositivo),
+        participante: { bolaoId, ...(usuarioId ? { OR: [{ usuarioId: null }, { usuarioId }] } : {}) },
+      },
       select: { participanteId: true },
     });
     return d?.participanteId ?? null;
@@ -92,7 +102,10 @@ export class PublicoService {
           where: { tokenHash: hashToken(valido), participante: { bolaoId: b.id } },
           select: { participanteId: true, participante: { select: { usuarioId: true } } },
         });
-        if (ja) {
+        // Participação guardada em OUTRA conta não conta como "já inscrito" para esta (RVAL-01).
+        if (ja && quem.usuarioId && ja.participante.usuarioId !== null && ja.participante.usuarioId !== quem.usuarioId) {
+          // segue para criar a participação desta conta
+        } else if (ja) {
           if (quem.usuarioId && ja.participante.usuarioId === null) {
             await tx.participante.update({ where: { id: ja.participanteId }, data: { usuarioId: quem.usuarioId } });
             await registrarEvento(tx, b.id, "vinculo_conta", "Participação do aparelho guardada na conta.", { participanteId: ja.participanteId });
@@ -138,26 +151,54 @@ export class PublicoService {
     });
   }
 
-  /** "Meus bolões": tudo de que a conta participa, com a situação de cada um. */
+  /**
+   * "Meus bolões": tudo de que a conta participa, com a situação de cada um. RVAL-09: por
+   * agregação no banco (como a lista do tesoureiro, BAUD-06); só bolão com resultado lançado
+   * carrega o resumo completo, porque a parte do prêmio depende do rateio. Máximo de 50.
+   */
   async participacoes(usuarioId: number): Promise<ParticipacaoDTO[]> {
-    const ps = await this.prisma.participante.findMany({ where: { usuarioId }, select: { id: true, bolaoId: true }, orderBy: { id: "desc" } });
+    const linhas = await this.prisma.$queryRaw<{ pid: number; bolaoId: number; valorPago: number; combos: bigint; njogos: number }[]>`
+      SELECT p.id AS pid, p."bolaoId", p."valorPago",
+             COALESCE(d.combos, 0)::bigint AS combos, COALESCE(d.n, 0)::int AS njogos
+      FROM "Participante" p
+      LEFT JOIN LATERAL (
+        SELECT SUM((ARRAY[0,0,0,0,0,0,1,7,28,84,210,462,924,1716,3003,5005,8008,12376,18564,27132,38760])[cardinality(j.dezenas) + 1])::bigint AS combos,
+               COUNT(*)::int AS n
+        FROM "Jogo" j WHERE j."participanteId" = p.id
+      ) d ON true
+      WHERE p."usuarioId" = ${usuarioId}
+      ORDER BY p.id DESC LIMIT 50`;
+    if (linhas.length === 0) return [];
+    const boloes = new Map(
+      (
+        await this.prisma.bolao.findMany({
+          where: { id: { in: linhas.map((l) => l.bolaoId) } },
+          select: { id: true, convite: true, nome: true, tipo: true, concurso: true, dataSorteio: true, precoSimples: true, resultadoDezenas: true },
+        })
+      ).map((b) => [b.id, b]),
+    );
     const out: ParticipacaoDTO[] = [];
-    for (const p of ps) {
-      const b = await carregarBolao(this.prisma, p.bolaoId);
-      const r = resumoDe(b);
-      const eu = r.participantes.find((x) => x.id === p.id)!;
+    for (const l of linhas) {
+      const b = boloes.get(l.bolaoId)!;
+      const devido = Number(l.combos) * b.precoSimples;
+      const temResultado = b.resultadoDezenas.length === 6;
+      let parte: number | null = null;
+      if (temResultado) {
+        const cheio = await carregarBolao(this.prisma, b.id);
+        parte = resumoDe(cheio).participantes.find((x) => x.id === l.pid)?.parte ?? null;
+      }
       out.push({
         convite: b.convite,
         nome: b.nome,
         tipo: b.tipo,
         concurso: b.concurso,
         dataSorteio: b.dataSorteio?.toISOString() ?? null,
-        situacao: eu.situacao,
-        devido: eu.devido,
-        pago: eu.pago,
-        jogos: r.jogos.filter((j) => j.participanteId === p.id).length,
-        temResultado: r.totais.premioBolao !== null,
-        parte: eu.parte,
+        situacao: situacaoDe(devido, l.valorPago),
+        devido,
+        pago: l.valorPago,
+        jogos: l.njogos,
+        temResultado,
+        parte,
       });
     }
     return out;

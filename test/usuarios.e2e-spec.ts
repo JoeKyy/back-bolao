@@ -190,6 +190,8 @@ describe("usuários e perfis", () => {
       expect(sim.status).toBe(202);
       expect(nao.status).toBe(202);
       expect(sim.body).toEqual(nao.body);
+      // RVAL-08: o link é emitido depois da resposta (em segundo plano); espera aparecer.
+      for (let i = 0; i < 40 && (await prisma.conviteOrganizador.count()) === antes; i++) await new Promise((r) => setTimeout(r, 100));
       expect(await prisma.conviteOrganizador.count()).toBe(antes + 1);
     });
 

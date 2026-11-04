@@ -160,11 +160,13 @@ export class AuthService implements OnModuleInit {
     const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id: usuarioId } });
     if (!u.senhaHash || !(await bcrypt.compare(atual, u.senhaHash))) throw naoAutenticado("Senha atual incorreta.");
     exigirSenhaAceitavel(nova, { email: u.email, nome: u.nome });
-    await this.prisma.eventoConta.create({ data: { usuarioId, porId: null, tipo: "senha_trocada", descricao: "Senha trocada pela própria pessoa." } });
-    await this.prisma.$transaction([
-      this.prisma.usuario.update({ where: { id: usuarioId }, data: { senhaHash: await bcrypt.hash(nova, 12) } }),
-      this.prisma.sessao.deleteMany({ where: { usuarioId } }),
-    ]);
+    const senhaHash = await bcrypt.hash(nova, 12);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.usuario.update({ where: { id: usuarioId }, data: { senhaHash } });
+      await tx.sessao.deleteMany({ where: { usuarioId } });
+      await this.convites.revogarTodos(tx, usuarioId); // RVAL-03
+      await tx.eventoConta.create({ data: { usuarioId, porId: null, tipo: "senha_trocada", descricao: "Senha trocada pela própria pessoa." } });
+    });
   }
 
   /** Confere a senha atual sem trocar nada (para gerar códigos de recuperação). */
@@ -176,6 +178,10 @@ export class AuthService implements OnModuleInit {
     const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id: usuarioId } });
     if (!u.senhaHash || !(await bcrypt.compare(senha, u.senhaHash))) throw naoAutenticado("Senha atual incorreta.");
     await this.limites.limpar(chave);
+  }
+
+  async anotar(usuarioId: number, tipo: string, descricao: string) {
+    await this.prisma.eventoConta.create({ data: { usuarioId, porId: null, tipo, descricao } });
   }
 
   /**
@@ -190,9 +196,17 @@ export class AuthService implements OnModuleInit {
     const normal = email.trim().toLowerCase();
     // Teto por conta: 3 por hora, em silêncio (não protege a caixa de entrada de quem é alvo se responder diferente).
     if (!(await this.limites.consumir(`esqueci:email:${normal}`, 3, 60 * 60 * 1000))) return;
+    // RVAL-08: a resposta não espera a busca nem o envio (conta que existe levava mais tempo que a
+    // que não existe). O trabalho roda depois, e uma falha dele só vai para o log.
+    void this.processarEsqueci(normal).catch((e) => this.log.warn(`esqueci falhou: ${e instanceof Error ? e.name : "erro"}`));
+  }
+
+  private async processarEsqueci(normal: string) {
     const u = await this.prisma.usuario.findUnique({ where: { email: normal } });
     if (!u || !u.ativo) return;
-    const { token } = await this.convites.emitir(u.id);
+    // RVAL-07: não revoga o link que o administrador possa ter acabado de gerar.
+    const { token } = await this.convites.emitir(u.id, undefined, false);
+    await this.anotar(u.id, "link_esqueci", "Foi pedido um link de nova senha pela página \"Esqueci minha senha\".");
     const link = `${config().appUrl}/organizador/${token}`;
     await this.mail.enviar(
       u.email,

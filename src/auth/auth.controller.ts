@@ -22,7 +22,7 @@ class TrocarSenhaDto {
   atual!: string;
 
   // Tamanho e conteúdo conferidos por exigirSenhaAceitavel (mensagem própria).
-  @IsString() @MaxLength(200)
+  @IsString() @MaxLength(128)
   nova!: string;
 }
 
@@ -43,7 +43,7 @@ class RecuperarDto {
   @IsString() @MinLength(12) @MaxLength(20)
   codigo!: string;
 
-  @IsString() @MaxLength(200)
+  @IsString() @MaxLength(128)
   novaSenha!: string;
 }
 

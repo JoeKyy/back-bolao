@@ -69,7 +69,9 @@ export class UsuariosService {
   }
 
   private async restariaAdmin(tx: Tx, semEste: number): Promise<boolean> {
-    return (await tx.usuario.count({ where: { admin: true, ativo: true, id: { not: semEste } } })) > 0;
+    // RVAL-05: só conta quem consegue entrar (ativo e com senha definida). Administrador com convite
+    // pendente não sustenta o sistema.
+    return (await tx.usuario.count({ where: { admin: true, ativo: true, senhaHash: { not: null }, id: { not: semEste } } })) > 0;
   }
 
   async alterarPerfis(quemPede: number, usuarioId: number, perfis: Perfis) {
@@ -141,6 +143,7 @@ export class UsuariosService {
       if (!(await this.convites.consumir(tx, c.id))) throw naoEncontrado("Convite inválido ou expirado.");
       await tx.usuario.update({ where: { id: c.usuarioId }, data: { senhaHash, nome: nomeFinal } });
       await tx.sessao.deleteMany({ where: { usuarioId: c.usuarioId } });
+      await this.convites.revogarTodos(tx, c.usuarioId); // RVAL-03
       await this.anotar(tx, c.usuarioId, null, "senha_por_link", novo ? "Senha definida pelo link de convite." : "Senha trocada por link de acesso. Se não foi você, avise o administrador.");
       return c.usuarioId;
     });

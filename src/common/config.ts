@@ -10,7 +10,7 @@ export interface Config {
   adminEmail: string | null;
   adminSenha: string | null;
   caixaApiUrl: string | null;
-  /** SMTP para "esqueci minha senha" (ex.: smtps://usuario:senha@smtp.exemplo.com:465). */
+  /** SMTP para "esqueci minha senha" (ex.: smtps://<usuario>:<senha>@<servidor-smtp>:465). */
   smtpUrl: string | null;
   mailFrom: string;
   /** Endereço público do front, para montar os links dos e-mails. */
