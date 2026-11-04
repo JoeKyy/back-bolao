@@ -146,6 +146,8 @@ export interface PainelParticipante {
   participantes: ParticipanteDTO[];
   totais: Totais;
   chance: Chance;
+  /** Como a pessoa está identificada neste bolão: pela conta, só pelo aparelho, ou não participa. */
+  acesso: "conta" | "aparelho" | null;
 }
 
 export interface ConcursoCaixa {
@@ -168,27 +170,45 @@ export interface EventoDTO {
   criadoEm: string;
 }
 
-export type Papel = "ADMIN" | "ORGANIZADOR";
-
-/** Organizador logado. */
+/** Conta logada. Perfis combináveis; sem nenhum é pessoa comum (só participa). */
 export interface Eu {
   id: number;
   nome: string;
   email: string;
-  papel: Papel;
+  admin: boolean;
+  tesoureiro: boolean;
 }
 
-/** Visão do ADMIN sobre as contas (sem nada dos bolões dos outros além da contagem). */
-export interface OrganizadorDTO {
+/** Visão do administrador sobre as contas (sem nada dos bolões dos outros além das contagens). */
+export interface UsuarioDTO {
   id: number;
   nome: string;
   email: string;
-  papel: Papel;
+  admin: boolean;
+  tesoureiro: boolean;
   ativo: boolean;
   /** Conta criada, convite ainda não aceito (sem senha). */
   pendente: boolean;
+  /** Bolões dos quais é tesoureiro. */
   boloes: number;
+  /** Bolões dos quais participa com a conta. */
+  participacoes: number;
   criadoEm: string;
+}
+
+/** Um bolão de que a conta participa ("Minha área"). */
+export interface ParticipacaoDTO {
+  convite: string;
+  nome: string;
+  tipo: TipoBolao;
+  concurso: number | null;
+  dataSorteio: string | null;
+  situacao: Situacao;
+  devido: number;
+  pago: number;
+  jogos: number;
+  temResultado: boolean;
+  parte: number | null;
 }
 
 /** Convite gerado: o token aparece UMA vez, para o ADMIN repassar. */

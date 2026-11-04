@@ -36,7 +36,8 @@ export async function limpar(prisma: PrismaService) {
   await prisma.$executeRawUnsafe(
     `TRUNCATE "Evento","Jogo","DispositivoAcesso","Participante","Bolao","Sessao","Tentativa","AparelhoOrganizador","ConviteOrganizador","CodigoRecuperacao" RESTART IDENTITY CASCADE`,
   );
-  await prisma.$executeRawUnsafe(`DELETE FROM "Usuario" WHERE "papel" <> 'ADMIN'`);
+  await prisma.$executeRawUnsafe(`DELETE FROM "Usuario" WHERE "email" <> 'admin@teste.local'`);
+  await prisma.$executeRawUnsafe(`UPDATE "Usuario" SET "admin" = true, "tesoureiro" = true, "ativo" = true WHERE "email" = 'admin@teste.local'`);
 }
 
 /** Cliente com cookies (agent) que manda os cabeçalhos do front. */

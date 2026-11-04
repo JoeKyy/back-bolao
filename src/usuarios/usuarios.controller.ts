@@ -1,23 +1,37 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { Transform } from "class-transformer";
 import { IsBoolean, IsEmail, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
 import type { Request, Response } from "express";
 import { ipDe } from "../auth/auth.controller";
-import { AdminGuard, PapelAdminGuard, type RequestComAdmin } from "../auth/auth.guard";
+import { AdminGuard, PerfilAdminGuard, type RequestComAdmin } from "../auth/auth.guard";
 import { AuthService } from "../auth/auth.service";
 import { COOKIE_SESSAO, opcoesCookie } from "../common/cookies";
 import { Id } from "../common/id.pipe";
-import { OrganizadoresService } from "./organizadores.service";
+import { UsuariosService } from "./usuarios.service";
 
 const aparar = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
 const SEM_CONTROLE = /^[^\u0000-\u001F\u007F]*$/;
 
-class ConvidarDto {
+class CriarDto {
   @IsEmail() @MaxLength(120)
   email!: string;
 
   @Transform(aparar) @IsString() @MinLength(2) @MaxLength(60) @Matches(SEM_CONTROLE)
   nome!: string;
+
+  @IsOptional() @IsBoolean()
+  admin?: boolean;
+
+  @IsOptional() @IsBoolean()
+  tesoureiro?: boolean;
+}
+
+class PerfisDto {
+  @IsOptional() @IsBoolean()
+  admin?: boolean;
+
+  @IsOptional() @IsBoolean()
+  tesoureiro?: boolean;
 }
 
 class AtivoDto {
@@ -35,32 +49,39 @@ class AceitarDto {
   senha!: string;
 }
 
-/** Gestão das contas de organizador: só o ADMIN. */
-@Controller("organizadores")
-@UseGuards(AdminGuard, PapelAdminGuard)
-export class OrganizadoresController {
-  constructor(private readonly orgs: OrganizadoresService) {}
+/** Página Usuários (como no gestor): só o perfil Administrador. */
+@Controller("usuarios")
+@UseGuards(AdminGuard, PerfilAdminGuard)
+export class UsuariosController {
+  constructor(private readonly usuarios: UsuariosService) {}
 
   @Get()
   listar() {
-    return this.orgs.listar();
+    return this.usuarios.listar();
   }
 
-  @Post("convites")
-  convidar(@Body() dto: ConvidarDto) {
-    return this.orgs.convidar(dto.email, dto.nome);
+  /** Cria a conta (pendente) com os perfis e devolve o link de convite. */
+  @Post()
+  criar(@Body() dto: CriarDto) {
+    return this.usuarios.criar(dto.email, dto.nome, dto);
+  }
+
+  @Patch(":uid/perfis")
+  @HttpCode(204)
+  async perfis(@Id("uid") uid: number, @Body() dto: PerfisDto, @Req() req: RequestComAdmin) {
+    await this.usuarios.alterarPerfis(req.adminId!, uid, dto);
   }
 
   @Post(":uid/ativo")
   @HttpCode(204)
   async ativo(@Id("uid") uid: number, @Body() dto: AtivoDto, @Req() req: RequestComAdmin) {
-    await this.orgs.definirAtivo(req.adminId!, uid, dto.ativo);
+    await this.usuarios.definirAtivo(req.adminId!, uid, dto.ativo);
   }
 
   /** Novo link: convite (conta pendente) ou troca de senha (conta com senha). */
   @Post(":uid/link")
   link(@Id("uid") uid: number) {
-    return this.orgs.reenviar(uid);
+    return this.usuarios.link(uid);
   }
 }
 
@@ -68,19 +89,19 @@ export class OrganizadoresController {
 @Controller("convite-organizador/:token")
 export class ConviteOrganizadorController {
   constructor(
-    private readonly orgs: OrganizadoresService,
+    private readonly usuarios: UsuariosService,
     private readonly auth: AuthService,
   ) {}
 
   @Get()
   ver(@Param("token") token: string, @Req() req: Request) {
-    return this.orgs.verConvite(token, ipDe(req));
+    return this.usuarios.verConvite(token, ipDe(req));
   }
 
   @Post()
   @HttpCode(200)
   async aceitar(@Param("token") token: string, @Body() dto: AceitarDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const id = await this.orgs.aceitar(token, dto.nome ?? "", dto.senha, ipDe(req));
+    const id = await this.usuarios.aceitar(token, dto.nome ?? "", dto.senha, ipDe(req));
     const { token: sessao, expiraEm } = await this.auth.abrirSessao(id);
     res.cookie(COOKIE_SESSAO, sessao, opcoesCookie(expiraEm.getTime() - Date.now()));
     return { ok: true };

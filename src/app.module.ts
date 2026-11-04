@@ -1,6 +1,6 @@
 import { Controller, Get, Injectable, Logger, Module, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { AuthController } from "./auth/auth.controller";
-import { AdminGuard, PapelAdminGuard } from "./auth/auth.guard";
+import { AdminGuard, PerfilAdminGuard, TesoureiroGuard } from "./auth/auth.guard";
 import { AuthService } from "./auth/auth.service";
 import { BoloesController } from "./boloes/boloes.controller";
 import { BoloesService } from "./boloes/boloes.service";
@@ -8,13 +8,13 @@ import { DonoDoBolaoGuard } from "./boloes/dono.guard";
 import { CaixaService } from "./caixa/caixa.service";
 import { LimitesModule, LimitesService } from "./common/limites.service";
 import { PrismaModule, PrismaService } from "./prisma/prisma.service";
-import { ConviteOrganizadorController, OrganizadoresController } from "./organizadores/organizadores.controller";
-import { OrganizadoresService } from "./organizadores/organizadores.service";
-import { ConvitesService } from "./organizadores/convites.service";
+import { ConviteOrganizadorController, UsuariosController } from "./usuarios/usuarios.controller";
+import { UsuariosService } from "./usuarios/usuarios.service";
+import { ConvitesService } from "./usuarios/convites.service";
 import { CodigosService } from "./auth/codigos.service";
 import { LoginCriptoService } from "./auth/login-cripto.service";
 import { MailService } from "./mail/mail.service";
-import { PublicoController } from "./publico/publico.controller";
+import { ParticipacoesController, PublicoController } from "./publico/publico.controller";
 import { PublicoService } from "./publico/publico.service";
 import contrato from "./shared/contrato.json";
 
@@ -63,7 +63,7 @@ class Varredura implements OnModuleInit, OnModuleDestroy {
 
 @Module({
   imports: [PrismaModule, LimitesModule],
-  controllers: [SaudeController, AuthController, BoloesController, PublicoController, OrganizadoresController, ConviteOrganizadorController],
-  providers: [AuthService, LoginCriptoService, CodigosService, ConvitesService, MailService, AdminGuard, PapelAdminGuard, DonoDoBolaoGuard, OrganizadoresService, BoloesService, CaixaService, PublicoService, Varredura],
+  controllers: [SaudeController, AuthController, BoloesController, PublicoController, ParticipacoesController, UsuariosController, ConviteOrganizadorController],
+  providers: [AuthService, LoginCriptoService, CodigosService, ConvitesService, MailService, AdminGuard, PerfilAdminGuard, TesoureiroGuard, DonoDoBolaoGuard, UsuariosService, BoloesService, CaixaService, PublicoService, Varredura],
 })
 export class AppModule {}

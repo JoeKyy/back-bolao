@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
-import { AdminGuard, type RequestComAdmin } from "../auth/auth.guard";
+import { AdminGuard, TesoureiroGuard, type RequestComAdmin } from "../auth/auth.guard";
 import { DonoDoBolaoGuard } from "./dono.guard";
 import { CaixaService } from "../caixa/caixa.service";
 import { Id } from "../common/id.pipe";
@@ -22,9 +22,9 @@ import {
 const Confirmar = () => Query("confirmar");
 const sim = (v: unknown) => v === "1";
 
-/** Tudo aqui exige sessão de organizador, e as rotas com :id exigem ser o dono do bolão. */
+/** Tudo aqui exige o perfil Tesoureiro, e as rotas com :id exigem ser o dono do bolão. */
 @Controller()
-@UseGuards(AdminGuard, DonoDoBolaoGuard)
+@UseGuards(AdminGuard, TesoureiroGuard, DonoDoBolaoGuard)
 export class BoloesController {
   constructor(
     private readonly boloes: BoloesService,

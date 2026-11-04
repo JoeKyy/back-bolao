@@ -5,7 +5,7 @@ import { muitasTentativas, naoAutenticado } from "../common/erros";
 import { LimitesService, agruparIp } from "../common/limites.service";
 import { TOKEN_RE, hashToken, novoTokenSecreto } from "../common/tokens";
 import { MailService } from "../mail/mail.service";
-import { ConvitesService } from "../organizadores/convites.service";
+import { ConvitesService } from "../usuarios/convites.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { exigirSenhaAceitavel } from "./senha";
 
@@ -20,7 +20,8 @@ const CHAVE_FALHA_GLOBAL = "login:falha";
 
 export interface SessaoValida {
   id: number;
-  papel: "ADMIN" | "ORGANIZADOR";
+  admin: boolean;
+  tesoureiro: boolean;
 }
 
 // Hash fixo usado quando o e-mail não existe, para o tempo de resposta não revelar isso.
@@ -47,7 +48,7 @@ export class AuthService implements OnModuleInit {
       return;
     }
     await this.prisma.usuario.create({
-      data: { email: adminEmail, nome: "Administrador", papel: "ADMIN", senhaHash: await bcrypt.hash(adminSenha, 12) },
+      data: { email: adminEmail, nome: "Administrador", admin: true, tesoureiro: true, senhaHash: await bcrypt.hash(adminSenha, 12) },
     });
     this.log.log("Organizador criado a partir do .env.");
   }
@@ -100,12 +101,12 @@ export class AuthService implements OnModuleInit {
   }
 
   /** Devolve o id do organizador da sessão, ou null. Sessão vencida ou ociosa é apagada. */
-  /** Organizador da sessão (id e papel), ou null. Sessão vencida, ociosa ou de conta desativada cai. */
+  /** Conta da sessão (id e perfis lidos do banco a cada requisição), ou null. Sessão vencida, ociosa ou de conta desativada cai. */
   async validar(token: string | undefined): Promise<SessaoValida | null> {
     if (!token || token.length > 100) return null;
     const s = await this.prisma.sessao.findUnique({
       where: { tokenHash: hashToken(token) },
-      include: { usuario: { select: { papel: true, ativo: true } } },
+      include: { usuario: { select: { admin: true, tesoureiro: true, ativo: true } } },
     });
     if (!s) return null;
     if (!s.usuario.ativo) {
@@ -121,12 +122,12 @@ export class AuthService implements OnModuleInit {
     if (agora - s.ultimoUsoEm.getTime() > 60_000) {
       await this.prisma.sessao.update({ where: { id: s.id }, data: { ultimoUsoEm: new Date() } });
     }
-    return { id: s.usuarioId, papel: s.usuario.papel };
+    return { id: s.usuarioId, admin: s.usuario.admin, tesoureiro: s.usuario.tesoureiro };
   }
 
   async eu(id: number) {
     const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id } });
-    return { id: u.id, nome: u.nome, email: u.email, papel: u.papel };
+    return { id: u.id, nome: u.nome, email: u.email, admin: u.admin, tesoureiro: u.tesoureiro };
   }
 
   /** Cria a sessão de quem acabou de definir a senha pelo convite. */

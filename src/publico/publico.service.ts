@@ -5,7 +5,7 @@ import { TOKEN_RE, hashToken, novoTokenSecreto } from "../common/tokens";
 import { gerarPix } from "../pix/pix";
 import { PrismaService } from "../prisma/prisma.service";
 import { formatDezena, precoJogo, validarDezenas } from "../shared/regras";
-import type { ConvitePublico, JogoDTO, PainelParticipante, ParticipanteDTO } from "../shared/tipos";
+import type { ConvitePublico, JogoDTO, PainelParticipante, ParticipacaoDTO, ParticipanteDTO } from "../shared/tipos";
 import { aceitaApostas, bolaoDTO, carregarBolao, registrarEvento, resumoDe, travarBolao, type BolaoCompleto } from "../boloes/carregar";
 import { MAX_JOGOS_POR_BOLAO } from "../boloes/boloes.service";
 
@@ -16,6 +16,13 @@ export const JOGO_JANELA_MS = 10 * 60 * 1000;
 export const JOGO_MAX_POR_IP = 60;
 
 const semDono = (j: JogoDTO): JogoDTO => ({ ...j, participanteId: 0 });
+
+/** Quem está pedindo: aparelho (cookie) e, se logado, a conta e o perfil de tesoureiro. */
+export interface Identidade {
+  dispositivo?: string;
+  usuarioId?: number | null;
+  tesoureiro?: boolean;
+}
 
 @Injectable()
 export class PublicoService {
@@ -31,7 +38,15 @@ export class PublicoService {
     return b;
   }
 
-  /** Participante deste bolão ligado ao aparelho, ou null. */
+  /** Participante deste bolão: pela conta logada (se houver) ou pelo aparelho. */
+  private async participanteAtual(bolaoId: number, quem: Identidade): Promise<number | null> {
+    if (quem.usuarioId) {
+      const p = await this.prisma.participante.findFirst({ where: { bolaoId, usuarioId: quem.usuarioId }, select: { id: true } });
+      if (p) return p.id;
+    }
+    return this.participanteDoAparelho(bolaoId, quem.dispositivo);
+  }
+
   private async participanteDoAparelho(bolaoId: number, dispositivo: string | undefined) {
     if (!dispositivo || !TOKEN_RE.test(dispositivo)) return null;
     const d = await this.prisma.dispositivoAcesso.findFirst({
@@ -41,7 +56,7 @@ export class PublicoService {
     return d?.participanteId ?? null;
   }
 
-  async convite(convite: string, dispositivo: string | undefined): Promise<ConvitePublico> {
+  async convite(convite: string, quem: Identidade): Promise<ConvitePublico> {
     const b = await this.bolaoDoConvite(convite);
     return {
       nome: b.nome,
@@ -50,7 +65,7 @@ export class PublicoService {
       dataSorteio: b.dataSorteio?.toISOString() ?? null,
       precoSimples: b.precoSimples,
       inscricoesAbertas: aceitaApostas(b),
-      jaInscrito: (await this.participanteDoAparelho(b.id, dispositivo)) !== null,
+      jaInscrito: (await this.participanteAtual(b.id, quem)) !== null,
     };
   }
 
@@ -58,19 +73,32 @@ export class PublicoService {
    * Inscreve e devolve o token do aparelho. Tudo sob a trava do bolão (SEC-05): checagem do
    * aparelho, limite por IP e teto, para inscrições paralelas não criarem duplicatas.
    * O token do aparelho só é reaproveitado se o servidor já o emitiu (SEC-07).
+   * Logado: a participação fica na conta (nome da conta; uma por bolão). Se o aparelho já
+   * tinha participação sem conta neste bolão, ela passa a ser da conta.
    */
-  async inscrever(convite: string, nome: string, whatsapp: string, ip: string, dispositivo: string | undefined) {
+  async inscrever(convite: string, nome: string, whatsapp: string, ip: string, quem: Identidade) {
     const b = await this.bolaoDoConvite(convite);
     const chave = `inscricao:${b.id}:${agruparIp(ip)}`;
+    const dispositivo = quem.dispositivo;
     return this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, b.id);
       const valido = dispositivo && TOKEN_RE.test(dispositivo) ? dispositivo : undefined;
+      if (quem.usuarioId) {
+        const daConta = await tx.participante.findFirst({ where: { bolaoId: b.id, usuarioId: quem.usuarioId }, select: { id: true } });
+        if (daConta) return { dispositivo: valido };
+      }
       if (valido) {
         const ja = await tx.dispositivoAcesso.findFirst({
           where: { tokenHash: hashToken(valido), participante: { bolaoId: b.id } },
-          select: { id: true },
+          select: { participanteId: true, participante: { select: { usuarioId: true } } },
         });
-        if (ja) return { dispositivo: valido };
+        if (ja) {
+          if (quem.usuarioId && ja.participante.usuarioId === null) {
+            await tx.participante.update({ where: { id: ja.participanteId }, data: { usuarioId: quem.usuarioId } });
+            await registrarEvento(tx, b.id, "vinculo_conta", "Participação do aparelho guardada na conta.", { participanteId: ja.participanteId });
+          }
+          return { dispositivo: valido };
+        }
       }
       const atual = await tx.bolao.findUniqueOrThrow({ where: { id: b.id } });
       if (!aceitaApostas(atual)) throw conflito("inscricoes_encerradas", "As inscrições deste bolão estão encerradas.");
@@ -79,14 +107,60 @@ export class PublicoService {
       const n = await tx.participante.count({ where: { bolaoId: b.id } });
       if (n >= atual.maxParticipantes) throw conflito("bolao_cheio", "Este bolão atingiu o número máximo de participantes.");
 
+      const conta = quem.usuarioId ? await tx.usuario.findUnique({ where: { id: quem.usuarioId } }) : null;
+      const nomeFinal = conta?.nome || nome;
+      if (nomeFinal.trim().length < 2) throw invalido("nome", "Informe seu nome.");
       const emitido = valido ? (await tx.dispositivoAcesso.findFirst({ where: { tokenHash: hashToken(valido) }, select: { id: true } })) !== null : false;
       const token = emitido ? valido! : novoTokenSecreto();
-      const p = await tx.participante.create({ data: { bolaoId: b.id, nome, whatsapp } });
+      const p = await tx.participante.create({ data: { bolaoId: b.id, nome: nomeFinal, whatsapp, usuarioId: conta?.id ?? null } });
       await tx.dispositivoAcesso.create({ data: { tokenHash: hashToken(token), participanteId: p.id } });
       await tx.tentativa.create({ data: { chave } });
-      await registrarEvento(tx, b.id, "inscricao", `${nome} entrou pelo link de convite.`, { participanteId: p.id });
+      await registrarEvento(tx, b.id, "inscricao", `${nomeFinal} entrou pelo link de convite${conta ? " (com conta)" : ""}.`, { participanteId: p.id });
       return { dispositivo: token };
     });
+  }
+
+  /** Guarda na conta logada a participação que este aparelho tem no bolão. */
+  async vincular(convite: string, quem: Identidade) {
+    if (!quem.usuarioId) throw naoAutenticado("Entre na sua conta para guardar o bolão.");
+    const b = await this.bolaoDoConvite(convite);
+    await this.prisma.$transaction(async (tx) => {
+      await travarBolao(tx, b.id);
+      if (await tx.participante.findFirst({ where: { bolaoId: b.id, usuarioId: quem.usuarioId! } })) {
+        throw conflito("ja_na_conta", "Sua conta já participa deste bolão.");
+      }
+      const pid = await this.participanteDoAparelho(b.id, quem.dispositivo);
+      if (!pid) throw naoAutenticado("Entre no bolão pelo link de convite.");
+      const p = await tx.participante.findUniqueOrThrow({ where: { id: pid } });
+      if (p.usuarioId !== null) throw conflito("outra_conta", "Esta participação já está guardada em outra conta.");
+      await tx.participante.update({ where: { id: pid }, data: { usuarioId: quem.usuarioId } });
+      await registrarEvento(tx, b.id, "vinculo_conta", `Participação de ${p.nome} guardada na conta.`, { participanteId: pid });
+    });
+  }
+
+  /** "Meus bolões": tudo de que a conta participa, com a situação de cada um. */
+  async participacoes(usuarioId: number): Promise<ParticipacaoDTO[]> {
+    const ps = await this.prisma.participante.findMany({ where: { usuarioId }, select: { id: true, bolaoId: true }, orderBy: { id: "desc" } });
+    const out: ParticipacaoDTO[] = [];
+    for (const p of ps) {
+      const b = await carregarBolao(this.prisma, p.bolaoId);
+      const r = resumoDe(b);
+      const eu = r.participantes.find((x) => x.id === p.id)!;
+      out.push({
+        convite: b.convite,
+        nome: b.nome,
+        tipo: b.tipo,
+        concurso: b.concurso,
+        dataSorteio: b.dataSorteio?.toISOString() ?? null,
+        situacao: eu.situacao,
+        devido: eu.devido,
+        pago: eu.pago,
+        jogos: r.jogos.filter((j) => j.participanteId === p.id).length,
+        temResultado: r.totais.premioBolao !== null,
+        parte: eu.parte,
+      });
+    }
+    return out;
   }
 
   private montarPainel(b: BolaoCompleto, meuId: number | null, visaoOrganizador: boolean): PainelParticipante {
@@ -138,28 +212,33 @@ export class PublicoService {
       participantes: publicos,
       totais: r.totais,
       chance: r.chance,
+      acesso: null,
     };
   }
 
   /** `organizadorId`: quem está logado como organizador; só o DONO deste bolão tem a visão de organizador. */
-  async painel(convite: string, dispositivo: string | undefined, organizadorId: number | null): Promise<PainelParticipante> {
+  /** Só o DONO do bolão, com perfil de tesoureiro, tem a visão de organizador. */
+  async painel(convite: string, quem: Identidade): Promise<PainelParticipante> {
     const b0 = await this.bolaoDoConvite(convite);
-    const ehOrganizador = organizadorId !== null && b0.donoId === organizadorId;
-    const meuId = await this.participanteDoAparelho(b0.id, dispositivo);
+    const ehOrganizador = !!quem.usuarioId && !!quem.tesoureiro && b0.donoId === quem.usuarioId;
+    const meuId = await this.participanteAtual(b0.id, quem);
     if (!meuId && !ehOrganizador) throw naoAutenticado("Entre no bolão pelo link de convite.");
     const b = await carregarBolao(this.prisma, b0.id);
-    return this.montarPainel(b, meuId, !meuId && ehOrganizador);
+    const painel = this.montarPainel(b, meuId, !meuId && ehOrganizador);
+    const minha = meuId ? b.participantes.find((p) => p.id === meuId) : undefined;
+    painel.acesso = minha ? (minha.usuarioId ? "conta" : "aparelho") : null;
+    return painel;
   }
 
-  private async exigirParticipante(convite: string, dispositivo: string | undefined) {
+  private async exigirParticipante(convite: string, quem: Identidade) {
     const b = await this.bolaoDoConvite(convite);
-    const meuId = await this.participanteDoAparelho(b.id, dispositivo);
+    const meuId = await this.participanteAtual(b.id, quem);
     if (!meuId) throw naoAutenticado("Entre no bolão pelo link de convite.");
     return { b, meuId };
   }
 
-  async adicionarJogo(convite: string, dispositivo: string | undefined, dezenas: number[], surpresinha: boolean, ip: string) {
-    const { b, meuId } = await this.exigirParticipante(convite, dispositivo);
+  async adicionarJogo(convite: string, quem: Identidade, dezenas: number[], surpresinha: boolean, ip: string) {
+    const { b, meuId } = await this.exigirParticipante(convite, quem);
     const v = validarDezenas(dezenas, { min: 6, max: b.maxDezenasParticipante });
     if (!v.ok) throw invalido("jogo_invalido", v.erro);
     if (!(await this.limites.consumir(`jogo:${agruparIp(ip)}`, JOGO_MAX_POR_IP, JOGO_JANELA_MS))) {
@@ -186,8 +265,8 @@ export class PublicoService {
     });
   }
 
-  async removerJogo(convite: string, dispositivo: string | undefined, jogoId: number) {
-    const { b, meuId } = await this.exigirParticipante(convite, dispositivo);
+  async removerJogo(convite: string, quem: Identidade, jogoId: number) {
+    const { b, meuId } = await this.exigirParticipante(convite, quem);
     await this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, b.id);
       const atual = await carregarBolao(tx, b.id);

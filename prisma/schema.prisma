@@ -10,19 +10,17 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Papel {
-  ADMIN
-  ORGANIZADOR
-}
-
-/// Organizador (tesoureiro dos próprios bolões). O primeiro, criado no boot a partir do .env,
-/// é ADMIN: além dos bolões dele, convida, desativa e gera troca de senha de organizadores.
-/// O ADMIN NÃO enxerga os bolões dos outros.
+/// Conta de acesso. Perfis combináveis (como os perfis do gestor, mas independentes):
+/// - admin: gerencia contas e perfis; NÃO enxerga os bolões dos outros.
+/// - tesoureiro: cria e administra os próprios bolões (Pix, convites, pagamentos, registro).
+/// Sem nenhum dos dois é pessoa comum: só participa de bolões. O primeiro usuário, criado no
+/// boot a partir do .env, nasce admin e tesoureiro.
 model Usuario {
-  id        Int                   @id @default(autoincrement())
-  email     String                @unique
-  nome      String                @default("")
-  papel     Papel                 @default(ORGANIZADOR)
+  id         Int                   @id @default(autoincrement())
+  email      String                @unique
+  nome       String                @default("")
+  admin      Boolean               @default(false)
+  tesoureiro Boolean               @default(false)
   ativo     Boolean               @default(true)
   /// Nulo = conta criada pelo ADMIN com convite ainda não aceito (como no gestor).
   senhaHash String?
@@ -32,6 +30,7 @@ model Usuario {
   boloes    Bolao[]
   convites  ConviteOrganizador[]
   codigos   CodigoRecuperacao[]
+  participacoes Participante[]
 }
 
 /// Link de uso único para definir a senha: ativa a conta nova (convite) ou troca a senha de uma
@@ -146,6 +145,9 @@ model Participante {
   id           Int                @id @default(autoincrement())
   bolaoId      Int
   bolao        Bolao              @relation(fields: [bolaoId], references: [id], onDelete: Cascade)
+  /// Conta da pessoa, quando ela participa logada (vê o bolão em qualquer aparelho).
+  usuarioId    Int?
+  usuario      Usuario?           @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
   nome         String
   whatsapp     String             @default("")
   /// Quanto o organizador confirmou ter recebido (centavos).
@@ -155,7 +157,9 @@ model Participante {
   jogos        Jogo[]
   dispositivos DispositivoAcesso[]
 
+  @@unique([bolaoId, usuarioId])
   @@index([bolaoId])
+  @@index([usuarioId])
 }
 
 /// Liga o aparelho do participante (cookie aleatório; aqui só o sha256) ao cadastro dele.
