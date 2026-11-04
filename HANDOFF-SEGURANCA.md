@@ -69,6 +69,39 @@ Pedido do Joe: login por convite e usuário e senha no mesmo esquema do Gestor d
 
 Pendente: configurar SMTP no servidor (ou aceitar que a recuperação seja só por código e por link do ADMIN).
 
+## Perfis e participante com conta (04/11/2026), branch `feat/perfis`
+
+Pedido do Joe: perfis alterados numa página de usuários como no gestor, porque ele pode ou não ser também tesoureiro e admin.
+
+| ID | Item | Como | Evidência |
+|---|---|---|---|
+| PERF-01 | Perfis combináveis | `Usuario.admin` e `Usuario.tesoureiro` no lugar do papel único. Admin gerencia contas e perfis; tesoureiro cria e administra os próprios bolões; sem nenhum é pessoa comum. Migração `perfis` escrita à mão converte (ADMIN vira admin e tesoureiro; ORGANIZADOR vira tesoureiro) e foi ensaiada; `prisma migrate diff` fica vazio. | e2e |
+| PERF-02 | Último administrador | Alterar perfil ou desativar o último admin ativo dá 409 (`ultimo_admin`), sob trava global de contas. Não desativa a si mesmo. | e2e |
+| PERF-03 | Efeito imediato | Perfis são lidos do banco a cada requisição: perder tesoureiro tira a gestão dos bolões na hora (403), mas o participante continua vendo; voltar o perfil restaura. | e2e |
+| PERF-04 | Pessoa comum com conta | `Participante.usuarioId`: entra no bolão logada (sem digitar nome), vê o bolão em qualquer aparelho, "Meus bolões" (`/participacoes`) e `POST /convites/:c/vincular` para guardar na conta a participação feita só pelo aparelho. Uma participação por conta por bolão. | e2e |
+| PERF-05 | Visão de organizador | Só para o dono do bolão que ainda é tesoureiro. | e2e |
+
+## Auditoria completa (04/11/2026): correções
+
+Relatório em `../auditoria-2026-11-04/RELATORIO.md`. Corrigidos na branch `feat/perfis`:
+
+| ID | Gravidade | Correção | Local | Homolog | Produção |
+|---|---|---|---|---|---|
+| BAUD-06 | Alta, P1 | `GET /boloes` agrega no banco (contagens, soma paga, quitados por `LATERAL`), sem carregar jogos. Reensaiar o cenário 10x na homologação (aceite: 30 listas simultâneas abaixo de 300 MB). | testado (resultado idêntico ao do resumo) | pendente | pendente |
+| BAUD-03 | Média, P1 | Concurso normal exige `dataSorteio` na criação; sem data o bolão não aceita inscrição nem jogo. | testado | pendente | pendente |
+| BAUD-05 | Média, P1 | Importação da Caixa recusa (`resultado_incompleto`) faixa com ganhadores e valor zero ou nenhum ganhador. | parcial (regra testada por leitura; falta o formato real logo após o sorteio) | pendente | pendente |
+| BAUD-01 | Média, P1 | Login válido não devolve a tentativa; teto por IP 10 em 10 min; aparelho conhecido só dispensa o teto global para a própria conta, ativa. | testado | pendente | pendente |
+| BAUD-02 | Média, P1 | `EventoConta`: link emitido, senha por link, perfis, ativação e troca de senha ficam registrados; a pessoa vê em "Atividade da conta". O administrador continua podendo gerar link de troca de senha (necessário para suporte), agora com rastro. Risco aceito e documentado. | testado | pendente | pendente |
+| BAUD-04 | Média, P2 | Sobrescrever ou apagar resultado já lançado exige `?confirmar=1`. | testado | pendente | pendente |
+| BAUD-08 | Baixa, P2 | Teto de R$ 1.000.000,00 de devido por participante e de valor recebido. | testado | pendente | pendente |
+| BAUD-09 | Baixa, P2 | `backup.sh` grava em arquivo parcial e só renomeia depois de conferir o fim do dump. | testado (backup real) | pendente | pendente |
+| BAUD-11 | Baixa, P2 | Texto da calculadora por tipo (Virada não acumula; concurso normal acumula). | testado no navegador | pendente | pendente |
+| BAUD-07 | Média, P1 | **Aberto:** API conecta como superusuário e roda `migrate deploy` no boot. Seguir o AUD-07 do gestor: papel só DML para a API e `MIGRATION_DATABASE_URL` para as migrações. Fazer na montagem da VPS. | n/a | pendente | pendente |
+| BAUD-10 | Média, P1 | **Aberto:** nenhum repositório tem remote. Depende do acesso ao GitHub do Joe. | n/a | pendente | pendente |
+| BOL-10 | Média, P2 | **Subestimado pela auditoria:** a tela de inscrição promete apagar os dados quando o bolão acabar, e a rotina não existe. Implementar antes de publicar, ou trocar o texto. | n/a | pendente | pendente |
+
+SEC-06, BOL-01, SEC-05, SEC-01, SEC-04 e ORG-05 foram reabertos pela auditoria e estão cobertos pelas linhas acima.
+
 ## Novos controles (entraram com a reescrita)
 
 - CSRF: escrita exige `X-Bolao: 1` e `Origin` na lista de `CORS_ORIGINS`; CORS só para essas origens, com credenciais.
@@ -87,7 +120,7 @@ Pendente: configurar SMTP no servidor (ou aceitar que a recuperação seja só p
 
 ## Evidências (04/11/2026, local)
 
-- `pnpm test`: 44 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 52 testes contra Postgres 16 real (`bolao_teste`), incluindo os da auditoria. `pnpm lint` e `tsc` sem problemas. `nest build` ok.
+- `pnpm test`: 44 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 68 testes contra Postgres 16 real (`bolao_teste`), incluindo os da auditoria. `pnpm lint` e `tsc` sem problemas. `nest build` ok.
 - Ponta a ponta com o front e importação real da Caixa (concurso 3080): prêmio de quina R$ 38.878,66 + quadra R$ 514,10 = R$ 39.392,76, igual ao calculado.
 
 ## Ambientes
