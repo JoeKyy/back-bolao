@@ -196,6 +196,15 @@ export interface UsuarioDTO {
   criadoEm: string;
 }
 
+/** Ação registrada sobre a conta (visível para a própria pessoa). */
+export interface AtividadeContaDTO {
+  id: number;
+  descricao: string;
+  /** Nome de quem fez, quando foi o administrador; nulo quando a própria pessoa. */
+  por: string | null;
+  criadoEm: string;
+}
+
 /** Um bolão de que a conta participa ("Minha área"). */
 export interface ParticipacaoDTO {
   convite: string;

@@ -104,7 +104,7 @@ describe("fluxo completo do bolão", () => {
 
   it("excluir bolão exige o nome exato", async () => {
     const adm = await entrarComoAdmin(app);
-    const { id } = (await adm.post("/boloes", { nome: "Apagar", tipo: "NORMAL" })).body as { id: number };
+    const { id } = (await adm.post("/boloes", { nome: "Apagar", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" })).body as { id: number };
     await adm.post(`/boloes/${id}/excluir`, { confirmacao: "apagar" }).expect(400);
     await adm.post(`/boloes/${id}/excluir`, { confirmacao: "Apagar" }).expect(204);
     await adm.get(`/boloes/${id}`).expect(404);
@@ -112,7 +112,7 @@ describe("fluxo completo do bolão", () => {
 
   it("chave Pix inválida é recusada", async () => {
     const adm = await entrarComoAdmin(app);
-    const { id } = (await adm.post("/boloes", { nome: "Pix", tipo: "NORMAL" })).body as { id: number };
+    const { id } = (await adm.post("/boloes", { nome: "Pix", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" })).body as { id: number };
     const r = await adm.patch(`/boloes/${id}`, { pixChave: "não é chave" });
     expect(r.status).toBe(400);
     expect(r.body.codigo).toBe("pix_invalido");

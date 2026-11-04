@@ -29,6 +29,10 @@ export class CriarBolaoDto {
 
   @IsOptional() @IsInt() @Min(1) @Max(99999)
   concurso?: number | null;
+
+  /** ISO 8601. Obrigatória em concurso normal (a Virada usa a data fixa); sem ela nada trava depois do sorteio. */
+  @IsOptional() @IsString() @MaxLength(40)
+  dataSorteio?: string | null;
 }
 
 export class AtualizarBolaoDto {

@@ -62,8 +62,8 @@ export class UsuariosController {
 
   /** Cria a conta (pendente) com os perfis e devolve o link de convite. */
   @Post()
-  criar(@Body() dto: CriarDto) {
-    return this.usuarios.criar(dto.email, dto.nome, dto);
+  criar(@Body() dto: CriarDto, @Req() req: RequestComAdmin) {
+    return this.usuarios.criar(req.adminId!, dto.email, dto.nome, dto);
   }
 
   @Patch(":uid/perfis")
@@ -80,8 +80,8 @@ export class UsuariosController {
 
   /** Novo link: convite (conta pendente) ou troca de senha (conta com senha). */
   @Post(":uid/link")
-  link(@Id("uid") uid: number) {
-    return this.usuarios.link(uid);
+  link(@Id("uid") uid: number, @Req() req: RequestComAdmin) {
+    return this.usuarios.link(req.adminId!, uid);
   }
 }
 

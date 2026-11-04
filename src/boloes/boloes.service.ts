@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { Bolao } from "@prisma/client";
 import { conflito, invalido, naoEncontrado } from "../common/erros";
 import { novoConvite } from "../common/tokens";
 import { CaixaService } from "../caixa/caixa.service";
@@ -6,7 +7,7 @@ import { normalizarChave } from "../pix/pix";
 import { PrismaService } from "../prisma/prisma.service";
 import { formatBRL, formatDezena, validarDezenas } from "../shared/regras";
 import type { BolaoNaLista, EventoDTO, ResumoAdmin } from "../shared/tipos";
-import { bolaoAdminDTO, bolaoTravado, carregarBolao, exigirConfirmacao, registrarEvento, resumoDe, sorteioPassou, travarBolao } from "./carregar";
+import { TETO_DEVIDO, aceitaApostas, exigirDentroDoTeto, bolaoAdminDTO, bolaoTravado, carregarBolao, exigirConfirmacao, registrarEvento, resumoDe, sorteioPassou, travarBolao } from "./carregar";
 import type {
   AtualizarBolaoDto,
   CriarBolaoDto,
@@ -38,32 +39,63 @@ export class BoloesService {
     private readonly caixa: CaixaService,
   ) {}
 
-  /** Só os bolões do organizador (tesoureiro). */
+  /**
+   * Só os bolões do organizador (tesoureiro). BAUD-06: tudo por agregação no banco; nenhum jogo
+   * nem participante é carregado em memória (antes, 10 listas simultâneas no cenário 10x
+   * levavam a API a 1,6 GB).
+   */
   async listar(donoId: number): Promise<BolaoNaLista[]> {
     const bs = await this.prisma.bolao.findMany({
       where: { donoId },
       orderBy: { id: "desc" },
-      include: { participantes: true, jogos: true },
+      select: { id: true, nome: true, tipo: true, concurso: true, inscricoesAbertas: true, dataSorteio: true, resultadoDezenas: true },
     });
-    return bs.map((b) => {
-      const r = resumoDe(b);
-      return {
-        id: b.id,
-        nome: b.nome,
-        tipo: b.tipo,
-        concurso: b.concurso,
-        inscricoesAbertas: b.inscricoesAbertas,
-        participantes: b.participantes.length,
-        quitados: r.participantes.filter((p) => p.situacao === "quitado").length,
-        arrecadado: r.totais.arrecadado,
-        jogos: b.jogos.length,
-        temResultado: r.totais.premioBolao !== null,
-      };
-    });
+    if (bs.length === 0) return [];
+    const ids = bs.map((b) => b.id);
+    const [totais, quitados, jogos] = await Promise.all([
+      this.prisma.$queryRaw<{ bolaoId: number; n: number; arrecadado: bigint }[]>`
+        SELECT "bolaoId", COUNT(*)::int AS n, COALESCE(SUM("valorPago"), 0)::bigint AS arrecadado
+        FROM "Participante" WHERE "bolaoId" = ANY(${ids}::int[]) GROUP BY "bolaoId"`,
+      // Quitado = pagou o que deve e deve algo. Preço do jogo = C(k,6) x aposta simples; a tabela
+      // abaixo é C(k,6) para k de 0 a 20, indexada por cardinality(dezenas) + 1 (igual a precoJogo).
+      this.prisma.$queryRaw<{ bolaoId: number; quitados: number }[]>`
+        SELECT p."bolaoId", COUNT(*)::int AS quitados
+        FROM "Participante" p
+        JOIN "Bolao" b ON b.id = p."bolaoId"
+        JOIN LATERAL (
+          SELECT COALESCE(SUM((ARRAY[0,0,0,0,0,0,1,7,28,84,210,462,924,1716,3003,5005,8008,12376,18564,27132,38760])[cardinality(j.dezenas) + 1]), 0)::bigint AS combos
+          FROM "Jogo" j WHERE j."participanteId" = p.id
+        ) d ON true
+        WHERE p."bolaoId" = ANY(${ids}::int[]) AND d.combos > 0 AND p."valorPago"::bigint >= d.combos * b."precoSimples"
+        GROUP BY p."bolaoId"`,
+      this.prisma.jogo.groupBy({ by: ["bolaoId"], where: { bolaoId: { in: ids } }, _count: { _all: true } }),
+    ]);
+    const tot = new Map(totais.map((t) => [t.bolaoId, t]));
+    const quit = new Map(quitados.map((q) => [q.bolaoId, q.quitados]));
+    const jg = new Map(jogos.map((g) => [g.bolaoId, g._count._all]));
+    return bs.map((b) => ({
+      id: b.id,
+      nome: b.nome,
+      tipo: b.tipo,
+      concurso: b.concurso,
+      inscricoesAbertas: aceitaApostas({ ...(b as Bolao), inscricoesAbertas: b.inscricoesAbertas }),
+      participantes: tot.get(b.id)?.n ?? 0,
+      quitados: quit.get(b.id) ?? 0,
+      arrecadado: Number(tot.get(b.id)?.arrecadado ?? 0n),
+      jogos: jg.get(b.id) ?? 0,
+      temResultado: b.resultadoDezenas.length === 6,
+    }));
   }
 
   async criar(dto: CriarBolaoDto, donoId: number): Promise<{ id: number }> {
     const virada = dto.tipo === "VIRADA";
+    let dataSorteio: Date | null = virada ? VIRADA_2026.dataSorteio : null;
+    if (!virada) {
+      dataSorteio = dto.dataSorteio ? new Date(dto.dataSorteio) : null;
+      if (!dataSorteio || Number.isNaN(dataSorteio.getTime())) {
+        throw invalido("data_obrigatoria", "Informe a data e a hora do sorteio do concurso.");
+      }
+    }
     const b = await this.prisma.$transaction(async (tx) => {
       const criado = await tx.bolao.create({
         data: {
@@ -72,7 +104,7 @@ export class BoloesService {
           tipo: dto.tipo,
           convite: novoConvite(),
           concurso: dto.concurso ?? null,
-          dataSorteio: virada ? VIRADA_2026.dataSorteio : null,
+          dataSorteio,
           estimativaPremio: virada ? BigInt(VIRADA_2026.estimativa) : null,
         },
       });
@@ -230,6 +262,7 @@ export class BoloesService {
       exigirConfirmacao(b, confirmar || !!dto.confirmarComResultado);
       const devido = resumoDe(b).participantes.find((x) => x.id === id)!.devido;
       const valor = dto.valor ?? devido;
+      if (valor > TETO_DEVIDO) throw invalido("valor_alto", "Valor acima de R$ 1.000.000,00. Informe o valor realmente recebido.");
       if (valor === p.valorPago) return;
       await tx.participante.update({ where: { id }, data: { valorPago: valor, pagoEm: valor > 0 ? new Date() : null } });
       await registrarEvento(tx, bolaoId, "pagamento", `Pagamento de ${p.nome}: ${formatBRL(p.valorPago)} para ${formatBRL(valor)}.`, {
@@ -258,6 +291,7 @@ export class BoloesService {
       if (!p) throw naoEncontrado("Participante não encontrado.");
       const bolao = await tx.bolao.findUniqueOrThrow({ where: { id: bolaoId } });
       exigirConfirmacao(bolao, confirmar);
+      await exigirDentroDoTeto(tx, p.id, bolao.precoSimples, validos);
       const total = await tx.jogo.count({ where: { bolaoId } });
       if (total + validos.length > MAX_JOGOS_POR_BOLAO) throw conflito("limite_jogos", "Limite de jogos do bolão atingido.");
       await tx.jogo.createMany({
@@ -349,22 +383,41 @@ export class BoloesService {
     });
   }
 
-  async resultadoManual(bolaoId: number, dto: ResultadoManualDto) {
+  /** Resultado já lançado: sobrescrever ou apagar muda o rateio e exige confirmação (BAUD-04). */
+  private async exigirConfirmacaoDeResultado(bolaoId: number, confirmar: boolean) {
+    const b = await this.prisma.bolao.findUnique({ where: { id: bolaoId } });
+    if (!b) throw naoEncontrado("Bolão não encontrado.");
+    if (b.resultadoDezenas.length === 6) exigirConfirmacao(b, confirmar);
+  }
+
+  async resultadoManual(bolaoId: number, dto: ResultadoManualDto, confirmar = false) {
+    await this.exigirConfirmacaoDeResultado(bolaoId, confirmar);
     await this.gravarResultado(bolaoId, dto.dezenas, dto.premios, "manual");
   }
 
-  async resultadoCaixa(bolaoId: number, concursoPedido?: number) {
+  async resultadoCaixa(bolaoId: number, concursoPedido?: number, confirmar = false) {
     const b = await this.prisma.bolao.findUnique({ where: { id: bolaoId } });
     if (!b) throw naoEncontrado("Bolão não encontrado.");
+    if (b.resultadoDezenas.length === 6) exigirConfirmacao(b, confirmar);
     const numero = concursoPedido ?? b.concurso ?? undefined;
     if (!numero) throw invalido("sem_concurso", "Informe o número do concurso do bolão antes de buscar na Caixa.");
     const c = await this.caixa.concurso(numero);
     if (!c) throw conflito("sem_resultado", "A Caixa ainda não publicou o resultado desse concurso.");
+    // BAUD-05: logo depois do sorteio a Caixa publica as dezenas antes do rateio. Faixa com
+    // ganhadores e valor zero, ou nenhum ganhador em lugar nenhum, é resultado incompleto: não
+    // grava (fecharia as inscrições mostrando "fez quina, prêmio R$ 0").
+    const g = c.ganhadores;
+    const semRateio = g.sena + g.quina + g.quadra === 0;
+    const faixaZerada = (g.sena > 0 && c.premios.sena === 0) || (g.quina > 0 && c.premios.quina === 0) || (g.quadra > 0 && c.premios.quadra === 0);
+    if (semRateio || faixaZerada) {
+      throw conflito("resultado_incompleto", "A Caixa já publicou as dezenas, mas ainda não o valor dos prêmios. Tente de novo mais tarde ou informe à mão.");
+    }
     await this.gravarResultado(bolaoId, c.dezenas, c.premios, "caixa", c.numero);
     return c;
   }
 
-  async limparResultado(bolaoId: number) {
+  async limparResultado(bolaoId: number, confirmar = false) {
+    await this.exigirConfirmacaoDeResultado(bolaoId, confirmar);
     await this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, bolaoId);
       await tx.bolao.update({

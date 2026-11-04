@@ -31,6 +31,23 @@ model Usuario {
   convites  ConviteOrganizador[]
   codigos   CodigoRecuperacao[]
   participacoes Participante[]
+  atividade EventoConta[]
+}
+
+/// Trilha das ações sobre a conta (BAUD-02): link de acesso emitido, senha definida por link,
+/// perfis, ativação. A própria pessoa vê em "Minha conta". Sem isto o administrador podia gerar
+/// um link, trocar a senha de alguém e entrar como a pessoa sem deixar rastro.
+model EventoConta {
+  id        Int      @id @default(autoincrement())
+  usuarioId Int
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  /// Quem fez (administrador), quando foi outra pessoa; nulo quando a própria pessoa.
+  porId     Int?
+  tipo      String
+  descricao String
+  criadoEm  DateTime @default(now())
+
+  @@index([usuarioId, criadoEm])
 }
 
 /// Link de uso único para definir a senha: ativa a conta nova (convite) ou troca a senha de uma

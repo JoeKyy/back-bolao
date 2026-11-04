@@ -23,12 +23,18 @@ if docker compose version >/dev/null 2>&1; then COMPOSE=(docker compose); else C
 umask 077
 mkdir -p "$DESTINO"
 ARQ="$DESTINO/bolao-$(date +%Y%m%d-%H%M%S).sql.gz"
-"${COMPOSE[@]}" -p "$COMPOSE_PROJECT_NAME" exec -T postgres pg_dump -U "$USUARIO" -d "$BANCO" --no-owner | gzip > "$ARQ"
+# BAUD-09: escreve num arquivo temporário e só renomeia depois de conferir. Antes, falha deixava
+# um .sql.gz de 20 bytes com nome de backup válido, que podia ser tomado por backup bom.
+TMP="$ARQ.parcial"
+trap 'rm -f "$TMP"' EXIT
+"${COMPOSE[@]}" -p "$COMPOSE_PROJECT_NAME" exec -T postgres pg_dump -U "$USUARIO" -d "$BANCO" --no-owner | gzip > "$TMP"
 
 # Dump cortado no meio também falha: o pg_dump termina sempre com esta linha.
-if ! gzip -dc "$ARQ" | tail -n 5 | grep -q "PostgreSQL database dump complete"; then
-  echo "backup incompleto: $ARQ" >&2
+if ! gzip -dc "$TMP" | tail -n 5 | grep -q "PostgreSQL database dump complete"; then
+  echo "backup incompleto, descartado: $ARQ" >&2
   exit 1
 fi
+mv "$TMP" "$ARQ"
+trap - EXIT
 find "$DESTINO" -name 'bolao-*.sql.gz' -mtime +30 -delete
 echo "ok $ARQ"

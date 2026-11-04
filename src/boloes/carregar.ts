@@ -1,6 +1,7 @@
 import type { Bolao, Jogo, Participante } from "@prisma/client";
 import { conflito, naoEncontrado } from "../common/erros";
 import type { Tx } from "../prisma/prisma.service";
+import { precoJogo } from "../shared/regras";
 import type { BolaoAdminDTO, BolaoDTO } from "../shared/tipos";
 import { montarResumo, type Resumo } from "./resumo";
 
@@ -29,8 +30,11 @@ export const sorteioPassou = (b: Bolao, agora = Date.now()) => !!b.dataSorteio &
 /** Depois do sorteio ou com resultado: mudanças que mexem no rateio exigem confirmação (SEC-04). */
 export const bolaoTravado = (b: Bolao) => b.resultadoDezenas.length === 6 || sorteioPassou(b);
 
-/** Aceita inscrição e jogo novo? Nunca depois do sorteio nem com resultado (SEC-01). */
-export const aceitaApostas = (b: Bolao) => b.inscricoesAbertas && !bolaoTravado(b);
+/**
+ * Aceita inscrição e jogo novo? Nunca depois do sorteio nem com resultado (SEC-01), e nunca sem
+ * data de sorteio: sem ela nada travaria depois do sorteio real (BAUD-03).
+ */
+export const aceitaApostas = (b: Bolao) => b.inscricoesAbertas && !!b.dataSorteio && !bolaoTravado(b);
 
 export function bolaoDTO(b: Bolao): BolaoDTO {
   const premios = premiosDe(b);
@@ -88,6 +92,16 @@ export async function registrarEvento(
   dados?: Record<string, unknown>,
 ) {
   await tx.evento.create({ data: { bolaoId, tipo, descricao, dados: dados as object | undefined } });
+}
+
+/** Teto do que um participante pode dever (e do que se confirma como recebido): R$ 1.000.000,00. */
+export const TETO_DEVIDO = 100_000_000;
+
+/** Soma o preço dos jogos do participante mais os novos; recusa se passar do teto (BAUD-08). */
+export async function exigirDentroDoTeto(tx: Tx, participanteId: number, precoSimples: number, novos: number[][]) {
+  const atuais = await tx.jogo.findMany({ where: { participanteId }, select: { dezenas: true } });
+  const total = [...atuais.map((j) => j.dezenas), ...novos].reduce((s, d) => s + precoJogo(d.length, precoSimples), 0);
+  if (total > TETO_DEVIDO) throw conflito("limite_valor", "O valor dos jogos desta pessoa passaria de R$ 1.000.000,00. Divida em mais de uma pessoa ou fale com o administrador.");
 }
 
 /**

@@ -45,7 +45,7 @@ describe("usuários e perfis", () => {
 
   it("isolamento: organizador B não vê nem mexe em nada do bolão de A (tudo 404)", async () => {
     const adm = await entrarComoAdmin(app);
-    const { id } = (await adm.post("/boloes", { nome: "Bolão do Admin", tipo: "NORMAL" }).expect(201)).body as { id: number };
+    const { id } = (await adm.post("/boloes", { nome: "Bolão do Admin", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" }).expect(201)).body as { id: number };
     const conv = (await adm.get(`/boloes/${id}`)).body.bolao.convite as string;
     await adm.patch(`/boloes/${id}`, { pixChave: "admin@exemplo.com", pixNome: "Admin", pixCidade: "SP" }).expect(204);
     const ana = cliente(app);
@@ -92,7 +92,7 @@ describe("usuários e perfis", () => {
     const { org: bia } = await novaConta("bia@exemplo.com", "Bia");
     await bia.post("/boloes", { nome: "Bolão da Bia", tipo: "VIRADA" }).expect(201);
     const adm = await entrarComoAdmin(app);
-    await adm.post("/boloes", { nome: "Bolão do Admin", tipo: "NORMAL" }).expect(201);
+    await adm.post("/boloes", { nome: "Bolão do Admin", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" }).expect(201);
     expect(((await bia.get("/boloes")).body as { nome: string }[]).map((b) => b.nome)).toEqual(["Bolão da Bia"]);
     expect(((await adm.get("/boloes")).body as { nome: string }[]).map((b) => b.nome)).toEqual(["Bolão do Admin"]);
   });
@@ -217,7 +217,7 @@ describe("usuários e perfis", () => {
     it("pessoa comum não cria nem administra bolão (403) e não gerencia usuários", async () => {
       const { org: ana } = await novaConta("ana@exemplo.com", "Ana", {});
       expect((await ana.get("/auth/eu")).body).toMatchObject({ admin: false, tesoureiro: false });
-      await ana.post("/boloes", { nome: "Meu", tipo: "NORMAL" }).expect(403);
+      await ana.post("/boloes", { nome: "Meu", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" }).expect(403);
       await ana.get("/boloes").expect(403);
       await ana.get("/usuarios").expect(403);
       await ana.get("/participacoes").expect(200);
@@ -226,15 +226,15 @@ describe("usuários e perfis", () => {
     it("admin sem tesoureiro gerencia contas mas não bolões; ganhar o perfil vale na hora", async () => {
       const { org: gil } = await novaConta("gil@exemplo.com", "Gil", { admin: true });
       await gil.get("/usuarios").expect(200);
-      await gil.post("/boloes", { nome: "X", tipo: "NORMAL" }).expect(403);
+      await gil.post("/boloes", { nome: "X", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" }).expect(403);
       const id = ((await gil.get("/auth/eu")).body as { id: number }).id;
       await gil.patch(`/usuarios/${id}/perfis`, { tesoureiro: true }).expect(204);
-      await gil.post("/boloes", { nome: "Do Gil", tipo: "NORMAL" }).expect(201);
+      await gil.post("/boloes", { nome: "Do Gil", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" }).expect(201);
     });
 
     it("perder o perfil de tesoureiro tira a gestão dos bolões, mas o participante continua vendo", async () => {
       const { org: bia } = await novaConta("bia@exemplo.com", "Bia");
-      const { id } = (await bia.post("/boloes", { nome: "Da Bia", tipo: "NORMAL" }).expect(201)).body as { id: number };
+      const { id } = (await bia.post("/boloes", { nome: "Da Bia", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" }).expect(201)).body as { id: number };
       const conv = (await bia.get(`/boloes/${id}`)).body.bolao.convite as string;
       const p = cliente(app);
       await p.post(`/convites/${conv}/inscricao`, { nome: "Zé" }).expect(200);
@@ -265,7 +265,7 @@ describe("usuários e perfis", () => {
 
     it("pessoa comum participa com a conta e vê o bolão em outro aparelho", async () => {
       const adm = await entrarComoAdmin(app);
-      const { id } = (await adm.post("/boloes", { nome: "Da Firma", tipo: "NORMAL" })).body as { id: number };
+      const { id } = (await adm.post("/boloes", { nome: "Da Firma", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" })).body as { id: number };
       const conv = (await adm.get(`/boloes/${id}`)).body.bolao.convite as string;
       await novaConta("ana@exemplo.com", "Ana Paula", {});
       const celular = cliente(app);
@@ -292,7 +292,7 @@ describe("usuários e perfis", () => {
 
     it("participação feita só pelo aparelho pode ser guardada na conta", async () => {
       const adm = await entrarComoAdmin(app);
-      const { id } = (await adm.post("/boloes", { nome: "Do Aparelho", tipo: "NORMAL" })).body as { id: number };
+      const { id } = (await adm.post("/boloes", { nome: "Do Aparelho", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" })).body as { id: number };
       const conv = (await adm.get(`/boloes/${id}`)).body.bolao.convite as string;
       await novaConta("ana@exemplo.com", "Ana", {});
       const aparelho = cliente(app);
@@ -311,7 +311,7 @@ describe("usuários e perfis", () => {
 
     it("visão de organizador só para o dono que ainda é tesoureiro", async () => {
       const adm = await entrarComoAdmin(app);
-      const { id } = (await adm.post("/boloes", { nome: "Visão", tipo: "NORMAL" })).body as { id: number };
+      const { id } = (await adm.post("/boloes", { nome: "Visão", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" })).body as { id: number };
       const conv = (await adm.get(`/boloes/${id}`)).body.bolao.convite as string;
       expect((await adm.get(`/convites/${conv}/painel`).expect(200)).body.visaoOrganizador).toBe(true);
       const { org: ana } = await novaConta("ana@exemplo.com", "Ana", { admin: true });

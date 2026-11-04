@@ -96,6 +96,13 @@ export class AuthController {
     return this.auth.eu(req.adminId!);
   }
 
+  /** Últimas ações sobre a minha conta (link emitido, perfis, senha). */
+  @Get("atividade")
+  @UseGuards(AdminGuard)
+  atividade(@Req() req: RequestComAdmin) {
+    return this.auth.atividade(req.adminId!);
+  }
+
   @Post("senha")
   @HttpCode(200)
   @UseGuards(AdminGuard)

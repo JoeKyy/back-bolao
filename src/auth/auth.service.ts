@@ -13,7 +13,7 @@ export const SESSAO_DIAS = 7;
 /** Sem uso por este tempo, a sessão cai mesmo dentro do prazo absoluto. */
 export const SESSAO_OCIOSA_MS = 48 * 60 * 60 * 1000;
 export const LOGIN_JANELA_MS = 10 * 60 * 1000;
-export const LOGIN_MAX_POR_IP = 5;
+export const LOGIN_MAX_POR_IP = 10;
 /** Teto global de FALHAS: protege contra força bruta distribuída entre muitos IPs. */
 export const LOGIN_MAX_GLOBAL = 30;
 const CHAVE_FALHA_GLOBAL = "login:falha";
@@ -60,18 +60,23 @@ export class AuthService implements OnModuleInit {
     aparelho: string | undefined,
   ): Promise<{ token: string; expiraEm: Date; aparelho: string }> {
     // SEC-05: a tentativa é registrada ANTES de conferir a senha, de forma atômica. Requisições
-    // paralelas não passam todas pela mesma contagem antiga.
+    // paralelas não passam todas pela mesma contagem antiga. BAUD-01: o login bem-sucedido NÃO
+    // devolve a tentativa. Antes ele zerava o contador do IP, e quem tinha uma conta qualquer
+    // intercalava logins válidos para testar senhas de outra conta sem nunca chegar ao teto.
     const chaveIp = `login:ip:${agruparIp(ip)}`;
     if (!(await this.limites.consumir(chaveIp, LOGIN_MAX_POR_IP, LOGIN_JANELA_MS))) {
       throw muitasTentativas("Muitas tentativas. Aguarde alguns minutos.");
     }
-    // SEC-06: o teto global de falhas não tranca o organizador no aparelho onde ele já entrou.
-    const aparelhoConhecido = await this.aparelhoConhecido(aparelho);
-    if (!aparelhoConhecido && (await this.limites.contar(CHAVE_FALHA_GLOBAL, LOGIN_JANELA_MS)) >= LOGIN_MAX_GLOBAL) {
+    const usuario = await this.prisma.usuario.findUnique({ where: { email: email.trim().toLowerCase() } });
+    // SEC-06/BAUD-01: o teto global de falhas só é dispensado no aparelho onde a PRÓPRIA conta
+    // que está entrando (e ativa) já entrou antes. O aparelho de outra conta, ou de conta
+    // desativada, não vale como passe para tentar a senha do administrador.
+    const dono = await this.aparelhoConhecido(aparelho);
+    const conhecido = !!usuario && usuario.ativo && dono === usuario.id;
+    if (!conhecido && (await this.limites.contar(CHAVE_FALHA_GLOBAL, LOGIN_JANELA_MS)) >= LOGIN_MAX_GLOBAL) {
       throw muitasTentativas("Muitas tentativas no sistema. Aguarde alguns minutos ou entre pelo aparelho de sempre.");
     }
 
-    const usuario = await this.prisma.usuario.findUnique({ where: { email: email.trim().toLowerCase() } });
     const confere = await bcrypt.compare(senha, usuario?.senhaHash ?? HASH_FALSO);
     // Conta desativada ou com convite pendente responde igual a senha errada: não revela quais
     // contas existem.
@@ -80,14 +85,13 @@ export class AuthService implements OnModuleInit {
       throw naoAutenticado("E-mail ou senha incorretos.");
     }
 
-    await this.limites.limpar(chaveIp);
     const token = novoTokenSecreto();
     const expiraEm = new Date(Date.now() + SESSAO_DIAS * 24 * 60 * 60 * 1000);
     await this.prisma.sessao.create({ data: { tokenHash: hashToken(token), usuarioId: usuario.id, expiraEm } });
 
     // Mesmo aparelho de antes: mantém o token. Senão, emite um novo (nunca aceita valor do cliente).
-    const tokenAparelho = aparelhoConhecido === usuario.id ? aparelho! : novoTokenSecreto();
-    if (aparelhoConhecido !== usuario.id) {
+    const tokenAparelho = dono === usuario.id ? aparelho! : novoTokenSecreto();
+    if (dono !== usuario.id) {
       await this.prisma.aparelhoOrganizador.create({ data: { tokenHash: hashToken(tokenAparelho), usuarioId: usuario.id } });
     }
     return { token, expiraEm, aparelho: tokenAparelho };
@@ -125,6 +129,14 @@ export class AuthService implements OnModuleInit {
     return { id: s.usuarioId, admin: s.usuario.admin, tesoureiro: s.usuario.tesoureiro };
   }
 
+  /** Últimas ações sobre a conta, para a própria pessoa conferir (BAUD-02). */
+  async atividade(usuarioId: number) {
+    const es = await this.prisma.eventoConta.findMany({ where: { usuarioId }, orderBy: { id: "desc" }, take: 20 });
+    const porIds = [...new Set(es.map((e) => e.porId).filter((x): x is number => x !== null))];
+    const nomes = new Map((await this.prisma.usuario.findMany({ where: { id: { in: porIds } }, select: { id: true, nome: true, email: true } })).map((u) => [u.id, u.nome || u.email]));
+    return es.map((e) => ({ id: e.id, descricao: e.descricao, por: e.porId === null ? null : nomes.get(e.porId) ?? "administrador", criadoEm: e.criadoEm.toISOString() }));
+  }
+
   async eu(id: number) {
     const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id } });
     return { id: u.id, nome: u.nome, email: u.email, admin: u.admin, tesoureiro: u.tesoureiro };
@@ -148,6 +160,7 @@ export class AuthService implements OnModuleInit {
     const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id: usuarioId } });
     if (!u.senhaHash || !(await bcrypt.compare(atual, u.senhaHash))) throw naoAutenticado("Senha atual incorreta.");
     exigirSenhaAceitavel(nova, { email: u.email, nome: u.nome });
+    await this.prisma.eventoConta.create({ data: { usuarioId, porId: null, tipo: "senha_trocada", descricao: "Senha trocada pela própria pessoa." } });
     await this.prisma.$transaction([
       this.prisma.usuario.update({ where: { id: usuarioId }, data: { senhaHash: await bcrypt.hash(nova, 12) } }),
       this.prisma.sessao.deleteMany({ where: { usuarioId } }),

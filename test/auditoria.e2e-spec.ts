@@ -1,5 +1,6 @@
 // Testes dos achados da auditoria do agente (SEC-01 a SEC-08, 04/11/2026).
 import type { NestExpressApplication } from "@nestjs/platform-express";
+import { LOGIN_MAX_POR_IP } from "../src/auth/auth.service";
 import request from "supertest";
 import type { PrismaService } from "../src/prisma/prisma.service";
 import { ORIGEM, cliente, entrarComoAdmin, limpar, subirApp, login } from "./util";
@@ -20,7 +21,7 @@ describe("auditoria do agente", () => {
   });
 
   async function novoBolao(adm: ReturnType<typeof cliente>, nome = "Auditoria") {
-    const { id } = (await adm.post("/boloes", { nome, tipo: "NORMAL" }).expect(201)).body as { id: number };
+    const { id } = (await adm.post("/boloes", { nome, tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" }).expect(201)).body as { id: number };
     const conv = (await adm.get(`/boloes/${id}`)).body.bolao.convite as string;
     return { id, conv };
   }
@@ -115,7 +116,7 @@ describe("auditoria do agente", () => {
   });
 
   describe("SEC-05: limites atômicos", () => {
-    it("40 logins errados simultâneos testam no máximo 5 senhas", async () => {
+    it("40 logins errados simultâneos testam no máximo LOGIN_MAX_POR_IP senhas", async () => {
       const reqs = Array.from({ length: 40 }, () =>
         request(app.getHttpServer())
           .post("/auth/entrar")
@@ -124,8 +125,8 @@ describe("auditoria do agente", () => {
           .send(login("admin@teste.local", "errada")),
       );
       const st = (await Promise.all(reqs)).map((r) => r.status);
-      expect(st.filter((s) => s === 401).length).toBeLessThanOrEqual(5);
-      expect(st.filter((s) => s === 429).length).toBeGreaterThanOrEqual(35);
+      expect(st.filter((s) => s === 401).length).toBeLessThanOrEqual(LOGIN_MAX_POR_IP);
+      expect(st.filter((s) => s === 429).length).toBeGreaterThanOrEqual(40 - LOGIN_MAX_POR_IP);
     });
 
     it("8 inscrições simultâneas com o mesmo aparelho criam 1 participante", async () => {

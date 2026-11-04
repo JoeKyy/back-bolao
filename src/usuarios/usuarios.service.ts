@@ -45,7 +45,12 @@ export class UsuariosService {
     }));
   }
 
-  async criar(emailBruto: string, nome: string, perfis: Perfis): Promise<ConviteOrganizadorCriado> {
+  /** Registra na trilha da conta (BAUD-02). */
+  private async anotar(db: Tx, usuarioId: number, porId: number | null, tipo: string, descricao: string) {
+    await db.eventoConta.create({ data: { usuarioId, porId, tipo, descricao } });
+  }
+
+  async criar(quemPede: number, emailBruto: string, nome: string, perfis: Perfis): Promise<ConviteOrganizadorCriado> {
     const email = emailBruto.trim().toLowerCase();
     return this.prisma.$transaction(async (tx) => {
       if (await tx.usuario.findUnique({ where: { email } })) throw conflito("email_em_uso", "Já existe uma conta com este e-mail.");
@@ -53,6 +58,7 @@ export class UsuariosService {
         data: { email, nome, admin: !!perfis.admin, tesoureiro: !!perfis.tesoureiro, senhaHash: null },
       });
       const { token, expiraEm } = await this.convites.emitir(u.id, tx);
+      await this.anotar(tx, u.id, quemPede, "conta_criada", "Conta criada pelo administrador com link de convite.");
       return { token, expiraEm: expiraEm.toISOString() };
     });
   }
@@ -77,6 +83,9 @@ export class UsuariosService {
         throw conflito("ultimo_admin", "É preciso ter ao menos um administrador ativo. Dê o perfil a outra pessoa antes.");
       }
       await tx.usuario.update({ where: { id: usuarioId }, data: { admin, tesoureiro } });
+      if (u.admin !== admin || u.tesoureiro !== tesoureiro) {
+        await this.anotar(tx, usuarioId, quemPede, "perfis", `Perfis alterados: administrador ${admin ? "sim" : "não"}, tesoureiro ${tesoureiro ? "sim" : "não"}.`);
+      }
       this.log.log(
         `Perfis da conta ${usuarioId} alterados por ${quemPede}: admin ${u.admin}->${admin}, tesoureiro ${u.tesoureiro}->${tesoureiro}.`,
       );
@@ -84,12 +93,15 @@ export class UsuariosService {
   }
 
   /** Novo link: convite (conta pendente) ou troca de senha (conta com senha). */
-  async link(usuarioId: number): Promise<ConviteOrganizadorCriado> {
+  async link(quemPede: number, usuarioId: number): Promise<ConviteOrganizadorCriado> {
     const u = await this.prisma.usuario.findUnique({ where: { id: usuarioId } });
     if (!u) throw naoEncontrado("Usuário não encontrado.");
     if (!u.ativo) throw conflito("desativado", "Reative a conta antes de gerar um link.");
-    const { token, expiraEm } = await this.convites.emitir(u.id);
-    return { token, expiraEm: expiraEm.toISOString() };
+    return this.prisma.$transaction(async (tx) => {
+      const { token, expiraEm } = await this.convites.emitir(u.id, tx);
+      await this.anotar(tx, u.id, quemPede, "link_emitido", u.senhaHash ? "Administrador gerou um link para trocar a senha desta conta." : "Administrador gerou um novo link de convite.");
+      return { token, expiraEm: expiraEm.toISOString() };
+    });
   }
 
   async definirAtivo(quemPede: number, usuarioId: number, ativo: boolean) {
@@ -102,6 +114,7 @@ export class UsuariosService {
         throw conflito("ultimo_admin", "É preciso ter ao menos um administrador ativo.");
       }
       await tx.usuario.update({ where: { id: usuarioId }, data: { ativo } });
+      await this.anotar(tx, usuarioId, quemPede, "ativo", ativo ? "Conta reativada pelo administrador." : "Conta desativada pelo administrador.");
       if (!ativo) {
         // Desativar derruba as sessões e os links pendentes na hora.
         await tx.sessao.deleteMany({ where: { usuarioId } });
@@ -128,6 +141,7 @@ export class UsuariosService {
       if (!(await this.convites.consumir(tx, c.id))) throw naoEncontrado("Convite inválido ou expirado.");
       await tx.usuario.update({ where: { id: c.usuarioId }, data: { senhaHash, nome: nomeFinal } });
       await tx.sessao.deleteMany({ where: { usuarioId: c.usuarioId } });
+      await this.anotar(tx, c.usuarioId, null, "senha_por_link", novo ? "Senha definida pelo link de convite." : "Senha trocada por link de acesso. Se não foi você, avise o administrador.");
       return c.usuarioId;
     });
   }

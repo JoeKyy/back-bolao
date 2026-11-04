@@ -6,7 +6,7 @@ import { gerarPix } from "../pix/pix";
 import { PrismaService } from "../prisma/prisma.service";
 import { formatDezena, precoJogo, validarDezenas } from "../shared/regras";
 import type { ConvitePublico, JogoDTO, PainelParticipante, ParticipacaoDTO, ParticipanteDTO } from "../shared/tipos";
-import { aceitaApostas, bolaoDTO, carregarBolao, registrarEvento, resumoDe, travarBolao, type BolaoCompleto } from "../boloes/carregar";
+import { aceitaApostas, exigirDentroDoTeto, bolaoDTO, carregarBolao, registrarEvento, resumoDe, travarBolao, type BolaoCompleto } from "../boloes/carregar";
 import { MAX_JOGOS_POR_BOLAO } from "../boloes/boloes.service";
 
 export const INSCRICAO_JANELA_MS = 10 * 60 * 1000;
@@ -248,6 +248,7 @@ export class PublicoService {
       await travarBolao(tx, b.id);
       const atual = await tx.bolao.findUniqueOrThrow({ where: { id: b.id } });
       if (!aceitaApostas(atual)) throw conflito("inscricoes_encerradas", "As inscrições estão encerradas; não dá para incluir jogos.");
+      await exigirDentroDoTeto(tx, meuId, atual.precoSimples, [v.dezenas]);
       const meus = await tx.jogo.count({ where: { participanteId: meuId } });
       if (meus >= JOGOS_MAX_POR_PARTICIPANTE) throw conflito("limite_jogos", "Você atingiu o limite de jogos por participante.");
       if ((await tx.jogo.count({ where: { bolaoId: b.id } })) >= MAX_JOGOS_POR_BOLAO) {

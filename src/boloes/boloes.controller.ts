@@ -112,19 +112,19 @@ export class BoloesController {
 
   @Post("boloes/:id/resultado")
   @HttpCode(204)
-  async resultadoManual(@Id("id") id: number, @Body() dto: ResultadoManualDto) {
-    await this.boloes.resultadoManual(id, dto);
+  async resultadoManual(@Id("id") id: number, @Body() dto: ResultadoManualDto, @Confirmar() c?: string) {
+    await this.boloes.resultadoManual(id, dto, sim(c));
   }
 
   @Post("boloes/:id/resultado/caixa")
-  resultadoCaixa(@Id("id") id: number, @Body() dto: ResultadoCaixaDto) {
-    return this.boloes.resultadoCaixa(id, dto.concurso);
+  resultadoCaixa(@Id("id") id: number, @Body() dto: ResultadoCaixaDto, @Confirmar() c?: string) {
+    return this.boloes.resultadoCaixa(id, dto.concurso, sim(c));
   }
 
   @Delete("boloes/:id/resultado")
   @HttpCode(204)
-  async limparResultado(@Id("id") id: number) {
-    await this.boloes.limparResultado(id);
+  async limparResultado(@Id("id") id: number, @Confirmar() c?: string) {
+    await this.boloes.limparResultado(id, sim(c));
   }
 
   @Get("boloes/:id/eventos")

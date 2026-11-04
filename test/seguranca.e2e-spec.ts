@@ -1,4 +1,5 @@
 import type { NestExpressApplication } from "@nestjs/platform-express";
+import { LOGIN_MAX_POR_IP } from "../src/auth/auth.service";
 import request from "supertest";
 import type { PrismaService } from "../src/prisma/prisma.service";
 import { ORIGEM, cliente, entrarComoAdmin, limpar, subirApp, login } from "./util";
@@ -28,19 +29,19 @@ describe("segurança", () => {
 
     it("trocar X-Forwarded-For a cada tentativa NÃO burla o bloqueio", async () => {
       const status: number[] = [];
-      for (let i = 1; i <= 7; i++) status.push((await errar(`10.9.9.${i}`)).status);
-      expect(status).toEqual([401, 401, 401, 401, 401, 429, 429]);
+      for (let i = 1; i <= LOGIN_MAX_POR_IP + 2; i++) status.push((await errar(`10.9.9.${i}`)).status);
+      expect(status).toEqual([...Array(LOGIN_MAX_POR_IP).fill(401), 429, 429]);
     });
 
     it("a contagem fica no banco: sobrevive a reiniciar a API", async () => {
-      for (let i = 0; i < 5; i++) await errar("1.1.1.1");
+      for (let i = 0; i < LOGIN_MAX_POR_IP; i++) await errar("1.1.1.1");
       await app.close();
       ({ app, prisma } = await subirApp());
       expect((await errar("1.1.1.1")).status).toBe(429);
     });
 
     it("bloqueado, nem a senha certa entra", async () => {
-      for (let i = 0; i < 5; i++) await errar("1.1.1.1");
+      for (let i = 0; i < LOGIN_MAX_POR_IP; i++) await errar("1.1.1.1");
       const r = await cliente(app).post("/auth/entrar", login("admin@teste.local", "senha-de-teste-123"));
       expect(r.status).toBe(429);
     });
@@ -138,7 +139,7 @@ describe("segurança", () => {
 
     it("corpo grande demais é recusado", async () => {
       const c = await entrarComoAdmin(app);
-      const r = await c.post("/boloes", { nome: "x".repeat(70_000), tipo: "NORMAL" });
+      const r = await c.post("/boloes", { nome: "x".repeat(70_000), tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" });
       expect(r.status).toBe(413);
     });
   });
@@ -146,8 +147,8 @@ describe("segurança", () => {
   describe("isolamento entre bolões e participantes", () => {
     async function montar() {
       const adm = await entrarComoAdmin(app);
-      const a = (await adm.post("/boloes", { nome: "Bolão A", tipo: "NORMAL" }).expect(201)).body as { id: number };
-      const b = (await adm.post("/boloes", { nome: "Bolão B", tipo: "NORMAL" }).expect(201)).body as { id: number };
+      const a = (await adm.post("/boloes", { nome: "Bolão A", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" }).expect(201)).body as { id: number };
+      const b = (await adm.post("/boloes", { nome: "Bolão B", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" }).expect(201)).body as { id: number };
       const convA = (await adm.get(`/boloes/${a.id}`)).body.bolao.convite as string;
       const convB = (await adm.get(`/boloes/${b.id}`)).body.bolao.convite as string;
       return { adm, a, b, convA, convB };
@@ -200,7 +201,7 @@ describe("segurança", () => {
   describe("BOL-05: inscrição com limite", () => {
     it("o 11º cadastro do mesmo IP em 10 min é recusado", async () => {
       const adm = await entrarComoAdmin(app);
-      const b = (await adm.post("/boloes", { nome: "Cheio", tipo: "NORMAL" })).body as { id: number };
+      const b = (await adm.post("/boloes", { nome: "Cheio", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" })).body as { id: number };
       const conv = (await adm.get(`/boloes/${b.id}`)).body.bolao.convite as string;
       const st: number[] = [];
       for (let i = 0; i < 11; i++) st.push((await cliente(app).post(`/convites/${conv}/inscricao`, { nome: `Pessoa ${i}` })).status);
@@ -210,7 +211,7 @@ describe("segurança", () => {
 
     it("teto de participantes do bolão", async () => {
       const adm = await entrarComoAdmin(app);
-      const b = (await adm.post("/boloes", { nome: "Pequeno", tipo: "NORMAL" })).body as { id: number };
+      const b = (await adm.post("/boloes", { nome: "Pequeno", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" })).body as { id: number };
       await adm.patch(`/boloes/${b.id}`, { maxParticipantes: 2 }).expect(204);
       const conv = (await adm.get(`/boloes/${b.id}`)).body.bolao.convite as string;
       await cliente(app).post(`/convites/${conv}/inscricao`, { nome: "Um" }).expect(200);
@@ -224,7 +225,7 @@ describe("segurança", () => {
   describe("exportação CSV", () => {
     it("neutraliza fórmulas (CSV injection)", async () => {
       const adm = await entrarComoAdmin(app);
-      const b = (await adm.post("/boloes", { nome: "Planilha", tipo: "NORMAL" })).body as { id: number };
+      const b = (await adm.post("/boloes", { nome: "Planilha", tipo: "NORMAL", dataSorteio: "2099-01-01T13:00:00.000Z" })).body as { id: number };
       const p = (await adm.post(`/boloes/${b.id}/participantes`, { nome: "=HYPERLINK(\"http://x\")" }).expect(201)).body as { id: number };
       await adm.post(`/boloes/${b.id}/jogos`, { participanteId: p.id, jogos: [[1, 2, 3, 4, 5, 6]] }).expect(201);
       const r = await adm.get(`/boloes/${b.id}/exportar.csv`).expect(200);
