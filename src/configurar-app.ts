@@ -1,4 +1,5 @@
 import { ValidationPipe } from "@nestjs/common";
+import { falhaDeValidacao } from "./common/validacao";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import cookieParser from "cookie-parser";
 import helmet from "helmet";
@@ -32,7 +33,7 @@ export function configurarApp(app: NestExpressApplication) {
     maxAge: 600,
   });
   app.use(protecaoCsrf(cfg.corsOrigins));
-  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }));
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true, exceptionFactory: falhaDeValidacao }));
   app.useGlobalFilters(new FiltroErros());
   app.enableShutdownHooks();
 }

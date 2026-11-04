@@ -121,7 +121,22 @@ describe("segurança", () => {
       const r = await c.post("/boloes", { nome: "<script>Pague o Pix</script>", tipo: "XYZ" });
       expect(r.status).toBe(400);
       expect(JSON.stringify(r.body)).not.toContain("Pague");
-      expect(r.body).toEqual({ codigo: "entrada_invalida", mensagem: "Dados inválidos. Confira o formulário." });
+      expect(r.body).toEqual({
+        codigo: "entrada_invalida",
+        mensagem: "Dados inválidos. Confira o formulário.",
+        campos: { tipo: "Escolha uma das opções disponíveis." },
+      });
+    });
+
+    it("erro de validação diz qual campo e o motivo, sem ecoar nome de campo desconhecido", async () => {
+      const c = await entrarComoAdmin(app);
+      const curto = await c.post("/boloes", { nome: "A", tipo: "NORMAL" });
+      expect(curto.body.campos).toEqual({ nome: "Use pelo menos 2 caracteres." });
+      const vazio = await c.post("/boloes", { tipo: "NORMAL" });
+      expect(vazio.body.campos).toEqual({ nome: "Preencha este campo." });
+      const extra = await c.post("/boloes", { nome: "Teste", tipo: "NORMAL", "<img src=x>": 1 });
+      expect(extra.status).toBe(400);
+      expect(JSON.stringify(extra.body)).not.toContain("img");
     });
 
     it("campo extra no corpo é recusado", async () => {
