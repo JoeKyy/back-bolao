@@ -3,7 +3,7 @@
 # (é idempotente). NÃO é executado pelo CI. Lê o que faz antes de agir e não mexe em PHP, MySQL,
 # nginx nem no CloudPanel.
 #
-#   scp deploy/provisionar-vps.sh deploy/bolao-deploy vps_joekyy:/root/ && ssh vps_joekyy 'bash /root/provisionar-vps.sh'
+#   scp -r deploy vps_joekyy:/root/bolao-deploy-pkg && ssh vps_joekyy 'bash /root/bolao-deploy-pkg/provisionar-vps.sh'
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "rode como root"; exit 1; }
 AQUI="$(cd "$(dirname "$0")" && pwd)"

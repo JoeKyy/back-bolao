@@ -30,7 +30,7 @@ Cada ambiente tem o seu `COMPOSE_PROJECT_NAME`: sem isso dois ambientes derivam 
 ## Montagem (uma vez, nesta ordem)
 
 1. **Provisionar a VPS** (instala Docker, cria o usuário `deploy`, pastas e o comando de deploy). Revise o script antes:
-   `scp deploy/provisionar-vps.sh deploy/bolao-deploy deploy/initdb/01-papel-app.sh vps_joekyy:/root/ && ssh vps_joekyy 'bash /root/provisionar-vps.sh'`
+   `scp -r deploy vps_joekyy:/root/bolao-deploy-pkg && ssh vps_joekyy 'bash /root/bolao-deploy-pkg/provisionar-vps.sh'`
 2. **Chave do deploy.** No seu computador: `ssh-keygen -t ed25519 -N "" -C "bolao-deploy-ci" -f ~/.ssh/bolao_deploy`. Na VPS, em `/home/deploy/.ssh/authorized_keys`, uma linha:
    `restrict,command="/usr/local/sbin/bolao-deploy" ssh-ed25519 AAAA... bolao-deploy-ci`
    Essa chave não abre shell: só executa as quatro ações do script, com argumentos validados.
