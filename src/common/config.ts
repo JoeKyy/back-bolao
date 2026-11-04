@@ -10,6 +10,11 @@ export interface Config {
   adminEmail: string | null;
   adminSenha: string | null;
   caixaApiUrl: string | null;
+  /** SMTP para "esqueci minha senha" (ex.: smtps://<usuario>:<senha>@<servidor-smtp>:465). */
+  smtpUrl: string | null;
+  mailFrom: string;
+  /** Endereço público do front, para montar os links dos e-mails. */
+  appUrl: string;
 }
 
 export const SENHA_MINIMA = 12;
@@ -36,6 +41,9 @@ export function lerConfig(env: NodeJS.ProcessEnv = process.env): Config {
     adminEmail: env.ADMIN_EMAIL?.trim().toLowerCase() || null,
     adminSenha,
     caixaApiUrl: env.CAIXA_API_URL?.trim() || null,
+    smtpUrl: env.SMTP_URL?.trim() || null,
+    mailFrom: env.MAIL_FROM?.trim() || "Bolão da Mega <nao-responda@joekyy.com.br>",
+    appUrl: (env.APP_URL?.trim() || corsOrigins[0] || "http://localhost:3000").replace(/\/$/, ""),
   };
 }
 

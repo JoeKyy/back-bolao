@@ -1,5 +1,20 @@
 import { crc16, gerarPix, limparTexto, normalizarChave } from "./pix";
 
+/** Percorre o BR Code campo a campo (id, tamanho, valor) até o fim; falha se algo não fechar. */
+function lerEmv(s: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  let i = 0;
+  while (i < s.length) {
+    const id = s.slice(i, i + 2);
+    const n = Number(s.slice(i + 2, i + 4));
+    if (!/^\d{2}$/.test(id) || !Number.isInteger(n)) throw new Error(`EMV inválido em ${i}`);
+    out[id] = s.slice(i + 4, i + 4 + n);
+    i += 4 + n;
+  }
+  if (i !== s.length) throw new Error("EMV não fecha");
+  return out;
+}
+
 describe("pix", () => {
   it("CRC16 confere com o valor de referência CCITT-FALSE", () => {
     // "123456789" -> 0x29B1 é o vetor de teste padrão do CRC-16/CCITT-FALSE.
@@ -48,5 +63,33 @@ describe("pix", () => {
     expect(normalizarChave("123e4567-e89b-12d3-a456-426614174000")?.tipo).toBe("aleatoria");
     expect(normalizarChave("qualquer coisa")).toBeNull();
     expect(normalizarChave("<script>")).toBeNull();
+  });
+
+  it("SEC-03: chave aleatória + nome longo não estoura o campo 26", () => {
+    const p = gerarPix({
+      chave: "123e4567-e89b-12d3-a456-426614174000",
+      nome: "Organizador",
+      cidade: "Sao Paulo",
+      valor: 126000,
+      identificador: "BOL4P2",
+      descricao: "Bolao Teste Auditoria Rateio Tardio Grupo Grande e Mais Coisa",
+    });
+    const campos = lerEmv(p);
+    expect(campos["26"].length).toBeLessThanOrEqual(99);
+    expect(lerEmv(campos["26"])["01"]).toBe("123e4567-e89b-12d3-a456-426614174000");
+    expect(p.slice(-4)).toBe(crc16(p.slice(0, -4)));
+  });
+
+  it("SEC-03: e-mail de 77 caracteres e descrição de 80 continuam válidos", () => {
+    const email = `${"a".repeat(64)}@exemplo.com`.slice(0, 77);
+    const p = gerarPix({ chave: email, nome: "N".repeat(40), cidade: "C".repeat(30), valor: 600, identificador: "X", descricao: "D".repeat(80) });
+    const campos = lerEmv(p);
+    for (const v of Object.values(campos)) expect(v.length).toBeLessThanOrEqual(99);
+    expect(campos["59"]).toHaveLength(25);
+    expect(campos["60"]).toHaveLength(15);
+  });
+
+  it("SEC-03: e-mail com acento é recusado", () => {
+    expect(normalizarChave("joão@exemplo.com")).toBeNull();
   });
 });

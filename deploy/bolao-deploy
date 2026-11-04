@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# /usr/local/sbin/bolao-deploy
+#
+# Comando FORÇADO da chave SSH de deploy (authorized_keys: restrict,command="/usr/local/sbin/bolao-deploy").
+# A chave do CI não abre shell: só executa uma destas ações, com argumentos validados:
+#   carregar-imagem <ambiente> <servico> <sha>   (imagem gzip pela entrada padrão)
+#   atualizar-compose <ambiente> <servico>       (docker-compose.yml pela entrada padrão)
+#   implantar <ambiente> <servico> <sha>         (sobe, espera a saúde, volta para a anterior se falhar)
+#   estado <ambiente> <servico>                  (etiqueta no ar e a anterior)
+# ambiente: producao | homolog      servico: back | web
+set -euo pipefail
+
+BASE=/srv/bolao
+LIMITE_IMAGEM=$((1024 * 1024 * 1024))   # 1 GB
+LIMITE_COMPOSE=65536                    # 64 KB
+ESPERA_SAUDE=150                        # segundos
+MANTER_IMAGENS=2                        # só a atual e a anterior (economia de disco)
+MIN_LIVRE_GB=3                          # recusa carregar imagem com menos disco livre que isto
+
+falha() { echo "bolao-deploy: $*" >&2; exit 2; }
+
+# Um deploy por vez no servidor (CPU e memória são poucas): os demais esperam até 10 min.
+exec 9>/var/lock/bolao-deploy.lock
+flock -w 600 9 || falha "outro deploy em andamento há mais de 10 min"
+
+read -r ACAO AMB SERV TAG SOBRA <<<"${SSH_ORIGINAL_COMMAND:-}"
+[ -z "${SOBRA:-}" ] || falha "argumentos demais"
+case "$AMB" in producao|homolog) ;; *) falha "ambiente inválido";; esac
+case "$SERV" in back|web) ;; *) falha "serviço inválido";; esac
+DIR="$BASE/$AMB/$SERV"
+[ -d "$DIR" ] || falha "pasta $DIR não existe (rode o provisionamento)"
+if [ "$SERV" = back ]; then IMAGEM=bolao-api; SVC=api; VAR=API_TAG; else IMAGEM=bolao-web; SVC=web; VAR=WEB_TAG; fi
+valida_tag() { [[ "${TAG:-}" =~ ^[0-9a-f]{7,40}$ ]] || falha "etiqueta inválida"; }
+
+compose() { (cd "$DIR" && docker compose --env-file .env "$@"); }
+
+saude() {
+  local id estado fim=$((SECONDS + ESPERA_SAUDE))
+  while [ $SECONDS -lt $fim ]; do
+    id=$(compose ps -q "$SVC" 2>/dev/null || true)
+    if [ -n "$id" ]; then
+      estado=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id" 2>/dev/null || echo desconhecido)
+      # Os dois serviços têm healthcheck no compose. "restarting" (laço de reinício, por exemplo
+      # migração que falha) segue esperando até o limite e então cai no retorno à versão anterior.
+      case "$estado" in healthy) return 0;; unhealthy|exited|dead) return 1;; esac
+    fi
+    sleep 3
+  done
+  return 1
+}
+
+case "$ACAO" in
+  carregar-imagem)
+    valida_tag
+    LIVRE_GB=$(df -BG --output=avail /var/lib/docker | tail -1 | tr -dc '0-9')
+    [ "${LIVRE_GB:-0}" -ge "$MIN_LIVRE_GB" ] || falha "pouco disco livre (${LIVRE_GB}G < ${MIN_LIVRE_GB}G); limpe antes de publicar"
+    # nice: carregar a imagem não pode competir com os sites que já rodam na VPS.
+    head -c "$LIMITE_IMAGEM" | gunzip | nice -n 10 docker load >/dev/null
+    docker image inspect "$IMAGEM:$TAG" >/dev/null || falha "imagem $IMAGEM:$TAG não chegou"
+    echo "imagem $IMAGEM:$TAG carregada"
+    ;;
+  atualizar-compose)
+    head -c "$LIMITE_COMPOSE" > "$DIR/docker-compose.yml.novo"
+    (cd "$DIR" && docker compose --env-file .env -f docker-compose.yml.novo config -q) || { rm -f "$DIR/docker-compose.yml.novo"; falha "compose inválido"; }
+    mv "$DIR/docker-compose.yml.novo" "$DIR/docker-compose.yml"
+    echo "compose atualizado em $DIR"
+    ;;
+  implantar)
+    valida_tag
+    docker image inspect "$IMAGEM:$TAG" >/dev/null || falha "imagem $IMAGEM:$TAG não está no servidor"
+    ATUAL=$(cat "$DIR/.tag-atual" 2>/dev/null || true)
+    export "$VAR=$TAG"
+    if [ "$SERV" = back ]; then
+      compose --profile servidor up -d postgres
+      compose --profile servidor up -d --no-deps --force-recreate api
+    else
+      compose up -d --no-deps --force-recreate web
+    fi
+    if saude; then
+      [ -n "$ATUAL" ] && [ "$ATUAL" != "$TAG" ] && echo "$ATUAL" > "$DIR/.tag-anterior"
+      echo "$TAG" > "$DIR/.tag-atual"
+      # Mantém só as últimas imagens (a atual, a anterior e mais uma).
+      docker images "$IMAGEM" --format '{{.Tag}}' | grep -vE '^(local|ci)$' | tail -n +$((MANTER_IMAGENS + 1)) | while read -r t; do docker rmi "$IMAGEM:$t" >/dev/null 2>&1 || true; done
+      # Camadas sem etiqueta que sobraram da troca de imagem.
+      docker image prune -f >/dev/null 2>&1 || true
+      echo "no ar: $IMAGEM:$TAG"
+    else
+      echo "bolao-deploy: $IMAGEM:$TAG não ficou saudável em ${ESPERA_SAUDE}s" >&2
+      compose logs --tail 40 "$SVC" >&2 || true
+      if [ -n "$ATUAL" ] && docker image inspect "$IMAGEM:$ATUAL" >/dev/null 2>&1; then
+        echo "voltando para $IMAGEM:$ATUAL" >&2
+        export "$VAR=$ATUAL"
+        if [ "$SERV" = back ]; then compose --profile servidor up -d --no-deps --force-recreate api; else compose up -d --no-deps --force-recreate web; fi
+      fi
+      exit 1
+    fi
+    ;;
+  estado)
+    echo "atual:    $(cat "$DIR/.tag-atual" 2>/dev/null || echo nenhuma)"
+    echo "anterior: $(cat "$DIR/.tag-anterior" 2>/dev/null || echo nenhuma)"
+    echo "disco livre: $(df -h --output=avail /var/lib/docker | tail -1 | tr -d ' ')   docker: $(docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null | tr '\n' ';')"
+    ;;
+  *) falha "ação inválida" ;;
+esac

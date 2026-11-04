@@ -29,6 +29,10 @@ export class CriarBolaoDto {
 
   @IsOptional() @IsInt() @Min(1) @Max(99999)
   concurso?: number | null;
+
+  /** ISO 8601. Obrigatória em concurso normal (a Virada usa a data fixa); sem ela nada trava depois do sorteio. */
+  @IsOptional() @IsString() @MaxLength(40)
+  dataSorteio?: string | null;
 }
 
 export class AtualizarBolaoDto {
@@ -91,7 +95,7 @@ export class PagamentoDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000_000)
   valor?: number;
 
-  /** Obrigatório quando o bolão já tem resultado: mexer em pagamento muda o rateio (BOL-04). */
+  /** Compatibilidade: mesmo efeito de `?confirmar=1` (BOL-04/SEC-04). */
   @IsOptional() @IsBoolean()
   confirmarComResultado?: boolean;
 }
@@ -117,12 +121,13 @@ export class RegistroJogoDto {
   comprovante?: string | null;
 }
 
+/** Teto por faixa: R$ 10 bilhões (MAX_PREMIO_FAIXA). */
 class PremiosDto {
-  @IsInt() @Min(0) @Max(10_000_000_000_000)
+  @IsInt() @Min(0) @Max(1_000_000_000_000)
   sena!: number;
-  @IsInt() @Min(0) @Max(10_000_000_000_000)
+  @IsInt() @Min(0) @Max(1_000_000_000_000)
   quina!: number;
-  @IsInt() @Min(0) @Max(10_000_000_000_000)
+  @IsInt() @Min(0) @Max(1_000_000_000_000)
   quadra!: number;
 }
 

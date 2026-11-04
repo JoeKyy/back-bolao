@@ -1,7 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Patch, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
-import { AdminGuard } from "../auth/auth.guard";
+import { AdminGuard, TesoureiroGuard, type RequestComAdmin } from "../auth/auth.guard";
+import { DonoDoBolaoGuard } from "./dono.guard";
 import { CaixaService } from "../caixa/caixa.service";
+import { Id } from "../common/id.pipe";
 import { BoloesService } from "./boloes.service";
 import {
   AtualizarBolaoDto,
@@ -16,11 +18,13 @@ import {
   ResultadoManualDto,
 } from "./dto";
 
-const Id = (nome: string) => Param(nome, new ParseIntPipe({ errorHttpStatusCode: 404 }));
+/** `?confirmar=1`: o organizador confirmou mudar o rateio de um bolão travado (SEC-04). */
+const Confirmar = () => Query("confirmar");
+const sim = (v: unknown) => v === "1";
 
-/** Tudo aqui exige sessão do organizador. */
+/** Tudo aqui exige o perfil Tesoureiro, e as rotas com :id exigem ser o dono do bolão. */
 @Controller()
-@UseGuards(AdminGuard)
+@UseGuards(AdminGuard, TesoureiroGuard, DonoDoBolaoGuard)
 export class BoloesController {
   constructor(
     private readonly boloes: BoloesService,
@@ -28,13 +32,13 @@ export class BoloesController {
   ) {}
 
   @Get("boloes")
-  listar() {
-    return this.boloes.listar();
+  listar(@Req() req: RequestComAdmin) {
+    return this.boloes.listar(req.adminId!);
   }
 
   @Post("boloes")
-  criar(@Body() dto: CriarBolaoDto) {
-    return this.boloes.criar(dto);
+  criar(@Body() dto: CriarBolaoDto, @Req() req: RequestComAdmin) {
+    return this.boloes.criar(dto, req.adminId!);
   }
 
   @Get("boloes/:id")
@@ -44,8 +48,8 @@ export class BoloesController {
 
   @Patch("boloes/:id")
   @HttpCode(204)
-  async atualizar(@Id("id") id: number, @Body() dto: AtualizarBolaoDto) {
-    await this.boloes.atualizar(id, dto);
+  async atualizar(@Id("id") id: number, @Body() dto: AtualizarBolaoDto, @Confirmar() c?: string) {
+    await this.boloes.atualizar(id, dto, sim(c));
   }
 
   @Post("boloes/:id/excluir")
@@ -79,48 +83,48 @@ export class BoloesController {
 
   @Delete("boloes/:id/participantes/:pid")
   @HttpCode(204)
-  async removerParticipante(@Id("id") id: number, @Id("pid") pid: number) {
-    await this.boloes.removerParticipante(id, pid);
+  async removerParticipante(@Id("id") id: number, @Id("pid") pid: number, @Confirmar() c?: string) {
+    await this.boloes.removerParticipante(id, pid, sim(c));
   }
 
   @Post("boloes/:id/participantes/:pid/pagamento")
   @HttpCode(204)
-  async pagamento(@Id("id") id: number, @Id("pid") pid: number, @Body() dto: PagamentoDto) {
-    await this.boloes.definirPagamento(id, pid, dto);
+  async pagamento(@Id("id") id: number, @Id("pid") pid: number, @Body() dto: PagamentoDto, @Confirmar() c?: string) {
+    await this.boloes.definirPagamento(id, pid, dto, sim(c));
   }
 
   @Post("boloes/:id/jogos")
-  adicionarJogos(@Id("id") id: number, @Body() dto: JogosDto) {
-    return this.boloes.adicionarJogos(id, dto);
+  adicionarJogos(@Id("id") id: number, @Body() dto: JogosDto, @Confirmar() c?: string) {
+    return this.boloes.adicionarJogos(id, dto, sim(c));
   }
 
   @Delete("boloes/:id/jogos/:jid")
   @HttpCode(204)
-  async removerJogo(@Id("id") id: number, @Id("jid") jid: number) {
-    await this.boloes.removerJogo(id, jid);
+  async removerJogo(@Id("id") id: number, @Id("jid") jid: number, @Confirmar() c?: string) {
+    await this.boloes.removerJogo(id, jid, sim(c));
   }
 
   @Post("boloes/:id/jogos/:jid/registro")
   @HttpCode(204)
-  async registrarJogo(@Id("id") id: number, @Id("jid") jid: number, @Body() dto: RegistroJogoDto) {
-    await this.boloes.registrarJogo(id, jid, dto);
+  async registrarJogo(@Id("id") id: number, @Id("jid") jid: number, @Body() dto: RegistroJogoDto, @Confirmar() c?: string) {
+    await this.boloes.registrarJogo(id, jid, dto, sim(c));
   }
 
   @Post("boloes/:id/resultado")
   @HttpCode(204)
-  async resultadoManual(@Id("id") id: number, @Body() dto: ResultadoManualDto) {
-    await this.boloes.resultadoManual(id, dto);
+  async resultadoManual(@Id("id") id: number, @Body() dto: ResultadoManualDto, @Confirmar() c?: string) {
+    await this.boloes.resultadoManual(id, dto, sim(c));
   }
 
   @Post("boloes/:id/resultado/caixa")
-  resultadoCaixa(@Id("id") id: number, @Body() dto: ResultadoCaixaDto) {
-    return this.boloes.resultadoCaixa(id, dto.concurso);
+  resultadoCaixa(@Id("id") id: number, @Body() dto: ResultadoCaixaDto, @Confirmar() c?: string) {
+    return this.boloes.resultadoCaixa(id, dto.concurso, sim(c));
   }
 
   @Delete("boloes/:id/resultado")
   @HttpCode(204)
-  async limparResultado(@Id("id") id: number) {
-    await this.boloes.limparResultado(id);
+  async limparResultado(@Id("id") id: number, @Confirmar() c?: string) {
+    await this.boloes.limparResultado(id, sim(c));
   }
 
   @Get("boloes/:id/eventos")

@@ -54,10 +54,12 @@ describe("montarResumo", () => {
     expect(r.jogos[2].conferencia).toBeNull();
     expect(r.totais.premioBolao).toBe(5_000_000 + 100_000);
     expect(r.totais.melhorFaixa).toBe("quina");
-    // pesos: P1 = min(600, 600) = 600; P2 = min(1200, 1200) = 1200; P3 = 0
-    expect(r.totais.pesoTotal).toBe(1800);
+    // SEC-01: peso = min(pago, jogos REGISTRADOS). P1 = 600; P2 = min(1200, 600) = 600 (o 2º jogo
+    // dele não foi registrado); P3 = 0.
+    expect(r.totais.pesoTotal).toBe(1200);
+    expect(r.totais.pesoPrevisto).toBe(1800);
     const partes = r.participantes.map((p) => p.parte);
-    expect(partes).toEqual([1_700_000, 3_400_000, 0]);
+    expect(partes).toEqual([2_550_000, 2_550_000, 0]);
     expect(partes.reduce<number>((s, v) => s + (v ?? 0), 0)).toBe(r.totais.premioBolao);
   });
 
@@ -78,5 +80,28 @@ describe("montarResumo", () => {
     ]);
     expect(r.chance.apostas).toBe(7);
     expect(r.chance.umEm).toBe(Math.round(50_063_860 / 7));
+  });
+
+  it("SEC-01: quem paga um jogo caro não registrado (ex.: depois do sorteio) não leva o prêmio", () => {
+    const parts = [P(1, 600), P(2, 126_000)];
+    const jogos = [J(1, [1, 2, 3, 4, 5, 6]), J(2, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], false)];
+    const r = montarResumo(
+      { precoSimples: 600, resultadoDezenas: [1, 2, 3, 4, 5, 6], premios: { sena: 10_000_000_000, quina: 0, quadra: 0 } },
+      parts,
+      jogos,
+    );
+    expect(r.participantes.map((p) => p.parte)).toEqual([10_000_000_000, 0]);
+  });
+
+  it("SEC-10: prêmio acima de 2^53 não é aceito em silêncio", () => {
+    const vinte = Array.from({ length: 20 }, (_, i) => i + 1);
+    const jogos = Array.from({ length: 10 }, () => J(1, vinte));
+    expect(() =>
+      montarResumo(
+        { precoSimples: 600, resultadoDezenas: [1, 2, 3, 4, 5, 6], premios: { sena: 1e12, quina: 1e12, quadra: 1e12 } },
+        [P(1, 1e9)],
+        jogos,
+      ),
+    ).toThrow("faixa segura");
   });
 });
