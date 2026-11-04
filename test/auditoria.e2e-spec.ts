@@ -190,4 +190,30 @@ describe("auditoria do agente", () => {
       expect(agruparIp("10.0.0.1")).toBe("10.0.0.1");
     });
   });
+
+  describe("tesoureiro: só o organizador exporta, imprime, digita e registra", () => {
+    it("participante e anônimo recebem 401 em tudo que é do organizador", async () => {
+      const adm = await entrarComoAdmin(app);
+      const { id, conv } = await novoBolao(adm);
+      const ana = cliente(app);
+      await ana.post(`/convites/${conv}/inscricao`, { nome: "Ana", whatsapp: "11 98888-7777" }).expect(200);
+      await ana.post(`/convites/${conv}/jogos`, { dezenas: [1, 2, 3, 4, 5, 6] }).expect(204);
+      const jid = (await adm.get(`/boloes/${id}`)).body.jogos[0].id as number;
+      const anonimo = cliente(app);
+      for (const quem of [ana, anonimo]) {
+        await quem.get(`/boloes/${id}/exportar.csv`).expect(401); // planilha
+        await quem.get(`/boloes/${id}`).expect(401); // folha da lotérica e modo digitação usam esta
+        await quem.get(`/boloes/${id}/eventos`).expect(401);
+        await quem.get("/boloes").expect(401);
+        await quem.post(`/boloes/${id}/jogos/${jid}/registro`, { registrado: true }).expect(401);
+        await quem.post(`/boloes/${id}/participantes/1/pagamento`, {}).expect(401);
+        await quem.patch(`/boloes/${id}`, { pixChave: "golpe@exemplo.com" }).expect(401);
+        await quem.post(`/boloes/${id}/convite`).expect(401);
+        await quem.get("/caixa/megasena").expect(401);
+      }
+      // o participante só vê o painel do bolão, sem WhatsApp de ninguém
+      const painel = await ana.get(`/convites/${conv}/painel`).expect(200);
+      expect(JSON.stringify(painel.body)).not.toContain("98888");
+    });
+  });
 });
