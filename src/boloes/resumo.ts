@@ -2,8 +2,10 @@
 //
 // Regras:
 // - Cada jogo custa precoJogo(k, precoSimples). O participante deve a soma dos jogos dele.
-// - O organizador confirma quanto recebeu (valorPago). Peso no rateio = min(pago, devido).
+// - O organizador confirma quanto recebeu (valorPago).
 // - Só jogo marcado como REGISTRADO na Caixa é conferido e gera prêmio.
+// - Peso no rateio = min(pago, valor dos jogos REGISTRADOS do participante) (SEC-01): quem não
+//   tem jogo registrado não entra no rateio, mesmo que tenha pago depois do sorteio.
 // - Prêmio do bolão = soma, nos jogos registrados, de senas/quinas/quadras × valor da faixa.
 // - Rateio do prêmio proporcional ao peso (maior resto, sem perder centavo).
 
@@ -75,12 +77,20 @@ export function montarResumo(b: BolaoBase, parts: ParticipanteBase[], jogosBase:
   const devidoPor = new Map<number, number>();
   for (const j of jogos) devidoPor.set(j.participanteId, (devidoPor.get(j.participanteId) ?? 0) + j.preco);
 
-  const pesos = parts.map((p) => ({ id: p.id, peso: Math.min(p.valorPago, devidoPor.get(p.id) ?? 0) }));
+  const registradoPor = new Map<number, number>();
+  for (const j of jogos) if (j.registrado) registradoPor.set(j.participanteId, (registradoPor.get(j.participanteId) ?? 0) + j.preco);
+
+  const pesos = parts.map((p) => ({ id: p.id, peso: Math.min(p.valorPago, registradoPor.get(p.id) ?? 0) }));
   const pesoTotal = pesos.reduce((s, p) => s + p.peso, 0);
+  const pesoPrevisto = parts.reduce((s, p) => s + Math.min(p.valorPago, devidoPor.get(p.id) ?? 0), 0);
 
   const confs = jogos.flatMap((j) => (j.conferencia ? [j.conferencia] : []));
-  const premioBolao = temResultado ? premioDasConferencias(confs, b.premios!) : null;
-  const rateio = premioBolao !== null ? ratear(premioBolao, pesos) : null;
+  const premioGrande = temResultado ? premioDasConferencias(confs, b.premios!) : null;
+  if (premioGrande !== null && premioGrande > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("Prêmio do bolão fora da faixa segura; confira os valores por faixa.");
+  }
+  const premioBolao = premioGrande === null ? null : Number(premioGrande);
+  const rateio = premioGrande !== null ? ratear(premioGrande, pesos) : null;
 
   const participantes: ParticipanteAdminDTO[] = parts.map((p) => {
     const devido = devidoPor.get(p.id) ?? 0;
@@ -97,13 +107,14 @@ export function montarResumo(b: BolaoBase, parts: ParticipanteBase[], jogosBase:
   });
 
   // Chance: jogos de quem já pagou (é o que de fato vai ser registrado).
-  const pagantes = new Set(pesos.filter((p) => p.peso > 0).map((p) => p.id));
+  const pagantes = new Set(parts.filter((p) => p.valorPago > 0).map((p) => p.id));
   const chance = chanceSena(jogos.filter((j) => pagantes.has(j.participanteId)).map((j) => j.dezenas));
 
   const totais: Totais = {
     devido: participantes.reduce((s, p) => s + p.devido, 0),
     arrecadado: parts.reduce((s, p) => s + p.valorPago, 0),
     pesoTotal,
+    pesoPrevisto,
     premioBolao,
     melhorFaixa: temResultado ? melhorFaixa(confs) : null,
     jogos: jogos.length,

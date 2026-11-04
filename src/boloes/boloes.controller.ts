@@ -1,7 +1,8 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Patch, Post, Query, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
 import { AdminGuard } from "../auth/auth.guard";
 import { CaixaService } from "../caixa/caixa.service";
+import { Id } from "../common/id.pipe";
 import { BoloesService } from "./boloes.service";
 import {
   AtualizarBolaoDto,
@@ -16,7 +17,9 @@ import {
   ResultadoManualDto,
 } from "./dto";
 
-const Id = (nome: string) => Param(nome, new ParseIntPipe({ errorHttpStatusCode: 404 }));
+/** `?confirmar=1`: o organizador confirmou mudar o rateio de um bolão travado (SEC-04). */
+const Confirmar = () => Query("confirmar");
+const sim = (v: unknown) => v === "1";
 
 /** Tudo aqui exige sessão do organizador. */
 @Controller()
@@ -44,8 +47,8 @@ export class BoloesController {
 
   @Patch("boloes/:id")
   @HttpCode(204)
-  async atualizar(@Id("id") id: number, @Body() dto: AtualizarBolaoDto) {
-    await this.boloes.atualizar(id, dto);
+  async atualizar(@Id("id") id: number, @Body() dto: AtualizarBolaoDto, @Confirmar() c?: string) {
+    await this.boloes.atualizar(id, dto, sim(c));
   }
 
   @Post("boloes/:id/excluir")
@@ -79,31 +82,31 @@ export class BoloesController {
 
   @Delete("boloes/:id/participantes/:pid")
   @HttpCode(204)
-  async removerParticipante(@Id("id") id: number, @Id("pid") pid: number) {
-    await this.boloes.removerParticipante(id, pid);
+  async removerParticipante(@Id("id") id: number, @Id("pid") pid: number, @Confirmar() c?: string) {
+    await this.boloes.removerParticipante(id, pid, sim(c));
   }
 
   @Post("boloes/:id/participantes/:pid/pagamento")
   @HttpCode(204)
-  async pagamento(@Id("id") id: number, @Id("pid") pid: number, @Body() dto: PagamentoDto) {
-    await this.boloes.definirPagamento(id, pid, dto);
+  async pagamento(@Id("id") id: number, @Id("pid") pid: number, @Body() dto: PagamentoDto, @Confirmar() c?: string) {
+    await this.boloes.definirPagamento(id, pid, dto, sim(c));
   }
 
   @Post("boloes/:id/jogos")
-  adicionarJogos(@Id("id") id: number, @Body() dto: JogosDto) {
-    return this.boloes.adicionarJogos(id, dto);
+  adicionarJogos(@Id("id") id: number, @Body() dto: JogosDto, @Confirmar() c?: string) {
+    return this.boloes.adicionarJogos(id, dto, sim(c));
   }
 
   @Delete("boloes/:id/jogos/:jid")
   @HttpCode(204)
-  async removerJogo(@Id("id") id: number, @Id("jid") jid: number) {
-    await this.boloes.removerJogo(id, jid);
+  async removerJogo(@Id("id") id: number, @Id("jid") jid: number, @Confirmar() c?: string) {
+    await this.boloes.removerJogo(id, jid, sim(c));
   }
 
   @Post("boloes/:id/jogos/:jid/registro")
   @HttpCode(204)
-  async registrarJogo(@Id("id") id: number, @Id("jid") jid: number, @Body() dto: RegistroJogoDto) {
-    await this.boloes.registrarJogo(id, jid, dto);
+  async registrarJogo(@Id("id") id: number, @Id("jid") jid: number, @Body() dto: RegistroJogoDto, @Confirmar() c?: string) {
+    await this.boloes.registrarJogo(id, jid, dto, sim(c));
   }
 
   @Post("boloes/:id/resultado")

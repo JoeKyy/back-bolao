@@ -21,6 +21,27 @@ Um achado por vez. Branch de feature, PR para `dev`, PR `dev` para `homolog`, va
 | BOL-09 | Média, P2 | Sem CI. | Pendente: `esteira.yml` (lint, typecheck, test, e2e com Postgres de serviço, build, `pnpm audit --prod`) e deploy com verificação de saúde em `/saude` e conferência de `/saude/contrato` com o front. | n/a | pendente | pendente |
 | BOL-10 | Média, P2 | LGPD: nome e WhatsApp sem aviso nem retenção. | Aviso na inscrição feito no front. Pendente: rotina de limpeza de bolões encerrados há N meses (decisão de N). | parcial | pendente | pendente |
 
+## Auditoria do agente (04/11/2026), branch `fix/auditoria-agente`
+
+Revisão independente sobre a reescrita. Reproduzidos pelo agente: SEC-01, 03, 04, 05, 07, 08, 10 (e SEC-02 em parte, no Docker do Mac). Cada correção tem teste; os e2e ficam em `test/auditoria.e2e-spec.ts`.
+
+| ID | Gravidade | Problema | Correção | Local | Homolog | Produção |
+|---|---|---|---|---|---|---|
+| SEC-01 | Alta, P0 | Quem entrava e pagava depois do sorteio levava o prêmio sem ter jogo registrado; dava para reabrir inscrições depois do resultado. | Peso = min(pago, jogos REGISTRADOS); inscrição e jogo recusados a partir de `dataSorteio`; reabrir com resultado ou depois do sorteio dá 409. | testado | pendente | pendente |
+| SEC-02 | Alta, P0 | Atrás do Docker com porta publicada, `TRUST_PROXY=loopback` via todos com o IP do gateway (um travaria login e inscrições de todos). | API no compose com `network_mode: host` em 127.0.0.1:`API_PORT`; nginx com `X-Forwarded-For $remote_addr`. Aceite só na homologação: duas origens com chaves de IP diferentes. | n/a | pendente | pendente |
+| SEC-03 | Média, P1 | BR Code inválido com chave aleatória + nome de bolão longo (campo 26 > 99). | Descrição cortada para caber; campo > 99 ou fora do ASCII lança erro; e-mail só ASCII. Testes percorrem o EMV inteiro. | testado | pendente | pendente |
+| SEC-04 | Média, P1 | Depois do resultado, preço, jogos, remoções e reabertura mudavam o rateio sem confirmação. | `bolaoTravado` (resultado ou sorteio passado) exige `?confirmar=1` em preço, data, jogos, remoções, pagamento e registro; tudo vira `Evento` (inclusive edição de participante); exclusão de bolão vai para o log. | testado | pendente | pendente |
+| SEC-05 | Média, P1 | Limites "conta e depois grava": 40 logins paralelos testavam 40 senhas; 8 inscrições paralelas criavam 8 participantes. | `consumir()` com `pg_advisory_xact_lock` registra antes de conferir a senha; inscrição checa aparelho e limite dentro da trava do bolão. e2e com 40 e 8 paralelos. | testado | pendente | pendente |
+| SEC-06 | Média, P2 | Teto global de 30 falhas trancava o organizador indefinidamente. | Teto global conta só falhas e não vale para o aparelho conhecido (`AparelhoOrganizador`, cookie `bolao_org`); IPv6 agrupado por /64. | testado | pendente | pendente |
+| SEC-07 | Baixa, P2 | Cookie de aparelho aceitava valor escolhido pelo cliente (fixação). | Só reaproveita token já emitido pelo servidor; prefixo `__Host-` nos três cookies em produção. | testado | pendente | pendente |
+| SEC-08 | Baixa, P2 | Id acima de int4 dava 500 com stack. | `IdPipe` (1 a 2^31-1, só dígitos) responde 404. | testado | pendente | pendente |
+| SEC-09 | Baixa, P2 | Resposta da Caixa lida inteira antes do limite; prêmio sem teto. | Leitura em stream abortando em 200 kB (e por `content-length`); valor acima de R$ 10 bi invalida o resultado. | testado | pendente | pendente |
+| SEC-10 | Baixa, P2 | Prêmio total voltava a `Number` antes do rateio. | BigInt até o `ratear`; prêmio acima de 2^53 é recusado; teto de R$ 10 bi por faixa na DTO. | testado | pendente | pendente |
+| SEC-11 | Baixa, P2 | `backup.sh` com compose v1, sem `.env`, sem projeto e sem `pipefail`. | bash com `pipefail`, carrega `.env`, exige `COMPOSE_PROJECT_NAME`, usa `docker compose` (cai para v1), confere o fim do dump, `umask 077`. Backup gerado localmente; restauração fica para a homologação. | parcial | pendente | pendente |
+| SEC-12 | Baixa, P2 | `.dockerignore` sem `backups`/`.env.*`; `env_file` com todo o `.env`; imagem sem digest; front sem URL da API caía em localhost. | Corrigidos os quatro: ignore ampliado, variáveis explícitas no compose, `node:22-alpine@sha256:fe4f6d…`, build do front falha sem `NEXT_PUBLIC_API_URL`. | testado | pendente | pendente |
+
+Dependências (`pnpm audit --prod`): no back, `multer` (sem upload no código) e `deepmerge-ts` (CLI do Prisma), sem caminho alcançável; reavaliar no próximo ciclo. Front sem alertas.
+
 ## Novos controles (entraram com a reescrita)
 
 - CSRF: escrita exige `X-Bolao: 1` e `Origin` na lista de `CORS_ORIGINS`; CORS só para essas origens, com credenciais.
@@ -39,7 +60,7 @@ Um achado por vez. Branch de feature, PR para `dev`, PR `dev` para `homolog`, va
 
 ## Evidências (04/11/2026, local)
 
-- `pnpm test`: 34 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 26 testes contra Postgres 16 real (`bolao_teste`). `pnpm lint` e `tsc` sem problemas. `nest build` ok.
+- `pnpm test`: 44 testes (regras, resumo, Pix, Caixa, contrato). `pnpm test:e2e`: 37 testes contra Postgres 16 real (`bolao_teste`), incluindo os da auditoria. `pnpm lint` e `tsc` sem problemas. `nest build` ok.
 - Ponta a ponta com o front e importação real da Caixa (concurso 3080): prêmio de quina R$ 38.878,66 + quadra R$ 514,10 = R$ 39.392,76, igual ao calculado.
 
 ## Ambientes

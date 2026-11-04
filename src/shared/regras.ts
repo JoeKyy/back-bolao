@@ -103,13 +103,16 @@ export interface PremiosPorFaixa {
   quadra: number;
 }
 
-/** Prêmio total (centavos) de um conjunto de conferências. */
-export function premioDasConferencias(confs: Conferencia[], p: PremiosPorFaixa): number {
+/** Teto de valor por faixa (centavos): R$ 10 bilhões. Acima disso é erro de digitação ou dado hostil. */
+export const MAX_PREMIO_FAIXA = 1_000_000_000_000;
+
+/** Prêmio total (centavos) de um conjunto de conferências, em BigInt (não arredonda). */
+export function premioDasConferencias(confs: Conferencia[], p: PremiosPorFaixa): bigint {
   let total = 0n;
   for (const c of confs) {
     total += BigInt(c.senas) * BigInt(p.sena) + BigInt(c.quinas) * BigInt(p.quina) + BigInt(c.quadras) * BigInt(p.quadra);
   }
-  return Number(total);
+  return total;
 }
 
 export interface ItemRateio {
@@ -122,10 +125,10 @@ export interface ItemRateio {
  * Divide o prêmio (centavos) proporcionalmente ao peso, sem perder centavos: método do maior
  * resto, desempate pelo menor id. Em BigInt para não estourar com prêmios de bilhão.
  */
-export function ratear(premio: number, itens: ItemRateio[]): Map<number, number> {
+export function ratear(premio: number | bigint, itens: ItemRateio[]): Map<number, number> {
   const resultado = new Map<number, number>();
   const total = itens.reduce((s, i) => s + BigInt(Math.max(0, i.peso)), 0n);
-  const P = BigInt(Math.max(0, Math.trunc(premio)));
+  const P = typeof premio === "bigint" ? (premio > 0n ? premio : 0n) : BigInt(Math.max(0, Math.trunc(premio)));
   if (total <= 0n || P <= 0n) {
     for (const i of itens) resultado.set(i.id, 0);
     return resultado;

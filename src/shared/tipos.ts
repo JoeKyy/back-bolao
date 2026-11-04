@@ -43,7 +43,10 @@ export interface BolaoDTO {
   precoSimples: number;
   maxDezenasParticipante: number;
   maxParticipantes: number;
+  /** Efetivo: falso também depois do horário do sorteio ou com resultado lançado. */
   inscricoesAbertas: boolean;
+  /** Depois do sorteio (ou com resultado): mudanças de dinheiro exigem confirmação do organizador. */
+  travado: boolean;
   instrucoes: string;
   estimativaPremio: number | null;
   resultado: ResultadoDTO | null;
@@ -92,8 +95,10 @@ export interface ParticipanteAdminDTO extends ParticipanteDTO {
 export interface Totais {
   devido: number;
   arrecadado: number;
-  /** Soma dos pesos (valor pago que conta para o rateio). */
+  /** Soma dos pesos no rateio: valor pago coberto por jogos REGISTRADOS na Caixa. */
   pesoTotal: number;
+  /** Soma de min(pago, devido) de todos: base da calculadora antes do registro dos jogos. */
+  pesoPrevisto: number;
   premioBolao: number | null;
   melhorFaixa: Faixa | null;
   jogos: number;

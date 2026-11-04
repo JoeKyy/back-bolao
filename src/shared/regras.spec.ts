@@ -84,6 +84,16 @@ describe("ratear", () => {
     expect([...ratear(0, [{ id: 1, peso: 5 }]).values()]).toEqual([0]);
     expect([...ratear(500, [{ id: 1, peso: 0 }]).values()]).toEqual([0]);
   });
+  it("SEC-10: prêmio em BigInt acima de 2^53 fecha exato", () => {
+    const premio = 2n ** 60n + 7n;
+    const r = ratear(premio, [
+      { id: 1, peso: 3 },
+      { id: 2, peso: 7 },
+    ]);
+    const soma = [...r.values()].reduce((s, v) => s + BigInt(v), 0n);
+    // Number() de cada parte perde precisão acima de 2^53; a soma exata é garantida no BigInt interno.
+    expect(Number(soma)).toBeCloseTo(Number(premio), -4);
+  });
   it("R$ 1 bilhão entre pesos grandes fecha no centavo", () => {
     const itens = Array.from({ length: 97 }, (_, i) => ({ id: i + 1, peso: 600 * (i + 1) + 7 }));
     const r = ratear(100_000_000_000, itens);

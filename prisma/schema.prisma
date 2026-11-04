@@ -12,11 +12,24 @@ datasource db {
 
 /// O organizador. Hoje existe um só, criado no primeiro boot a partir do .env.
 model Usuario {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
+  id        Int                   @id @default(autoincrement())
+  email     String                @unique
   senhaHash String
-  criadoEm  DateTime @default(now())
+  criadoEm  DateTime              @default(now())
   sessoes   Sessao[]
+  aparelhos AparelhoOrganizador[]
+}
+
+/// Aparelho onde o organizador já entrou com sucesso (cookie aleatório; aqui só o sha256).
+/// Com o limite global de falhas estourado por terceiros, ele ainda entra por aqui (SEC-06).
+model AparelhoOrganizador {
+  id        Int      @id @default(autoincrement())
+  tokenHash String   @unique
+  usuarioId Int
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  criadoEm  DateTime @default(now())
+
+  @@index([usuarioId])
 }
 
 /// Sessão do organizador. O cookie leva um token aleatório; aqui fica só o sha256 dele (BOL-02).

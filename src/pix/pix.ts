@@ -2,7 +2,12 @@
 // pagamento: o código só garante que o participante paga a chave certa, no valor certo, com um
 // identificador que ajuda o organizador a achar o pagamento no extrato.
 
-const campo = (id: string, valor: string) => `${id}${String(valor.length).padStart(2, "0")}${valor}`;
+/** Campo EMV: id + tamanho em 2 dígitos + valor. Valor acima de 99 invalida o código (SEC-03). */
+function campo(id: string, valor: string): string {
+  if (valor.length > 99) throw new Error(`Campo Pix ${id} com ${valor.length} caracteres (máximo 99).`);
+  if (!/^[\x20-\x7E]*$/.test(valor)) throw new Error(`Campo Pix ${id} com caractere fora do ASCII.`);
+  return `${id}${String(valor.length).padStart(2, "0")}${valor}`;
+}
 
 /** CRC16-CCITT (polinômio 0x1021, início 0xFFFF), como o manual do BR Code exige. */
 export function crc16(payload: string): string {
@@ -31,7 +36,10 @@ export type TipoChave = "email" | "cpf" | "cnpj" | "telefone" | "aleatoria";
 /** Normaliza e valida a chave Pix. Devolve null se não reconhecer o formato. */
 export function normalizarChave(bruta: string): { chave: string; tipo: TipoChave } | null {
   const s = bruta.trim();
-  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) && s.length <= 77) return { chave: s.toLowerCase(), tipo: "email" };
+  // E-mail só ASCII: o BR Code conta tamanho em caracteres e não aceita acento (SEC-03).
+  if (/^[\x21-\x7E]+$/.test(s) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) && s.length <= 77) {
+    return { chave: s.toLowerCase(), tipo: "email" };
+  }
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) {
     return { chave: s.toLowerCase(), tipo: "aleatoria" };
   }
@@ -58,8 +66,12 @@ export interface DadosPix {
 
 export function gerarPix(d: DadosPix): string {
   const txid = d.identificador.replace(/[^A-Za-z0-9]/g, "").slice(0, 25) || "***";
-  const desc = d.descricao ? limparTexto(d.descricao, 40) : "";
-  const conta = campo("00", "br.gov.bcb.pix") + campo("01", d.chave) + (desc ? campo("02", desc) : "");
+  const gui = campo("00", "br.gov.bcb.pix");
+  const chave = campo("01", d.chave);
+  // A descrição é opcional: corta para o campo 26 inteiro caber em 99 (ou some).
+  const espaco = 99 - gui.length - chave.length - 4;
+  const desc = d.descricao && espaco > 0 ? limparTexto(d.descricao, Math.min(40, espaco)) : "";
+  const conta = gui + chave + (desc ? campo("02", desc) : "");
   const valor = d.valor > 0 ? campo("54", (d.valor / 100).toFixed(2)) : "";
   const semCrc =
     campo("00", "01") +

@@ -1,9 +1,10 @@
 import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { IsEmail, IsString, MaxLength, MinLength } from "class-validator";
-import type { CookieOptions, Request, Response } from "express";
-import { SENHA_MINIMA, config } from "../common/config";
+import type { Request, Response } from "express";
+import { SENHA_MINIMA } from "../common/config";
+import { COOKIE_ORGANIZADOR, COOKIE_SESSAO, opcoesCookie } from "../common/cookies";
 import { AdminGuard, lerCookie, type RequestComAdmin } from "./auth.guard";
-import { AuthService, COOKIE_SESSAO } from "./auth.service";
+import { AuthService } from "./auth.service";
 
 class EntrarDto {
   @IsEmail()
@@ -27,13 +28,7 @@ class TrocarSenhaDto {
   nova!: string;
 }
 
-export const opcoesCookie = (maxAgeMs: number): CookieOptions => ({
-  httpOnly: true,
-  secure: config().producao,
-  sameSite: "lax",
-  path: "/",
-  maxAge: maxAgeMs,
-});
+const UM_ANO_MS = 365 * 24 * 60 * 60 * 1000;
 
 /** IP já resolvido pelo Express segundo `trust proxy` (nunca o cabeçalho cru). */
 export const ipDe = (req: Request) => req.ip ?? req.socket.remoteAddress ?? "desconhecido";
@@ -45,8 +40,9 @@ export class AuthController {
   @Post("entrar")
   @HttpCode(200)
   async entrar(@Body() dto: EntrarDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const { token, expiraEm } = await this.auth.entrar(dto.email, dto.senha, ipDe(req));
+    const { token, expiraEm, aparelho } = await this.auth.entrar(dto.email, dto.senha, ipDe(req), lerCookie(req, COOKIE_ORGANIZADOR));
     res.cookie(COOKIE_SESSAO, token, opcoesCookie(expiraEm.getTime() - Date.now()));
+    res.cookie(COOKIE_ORGANIZADOR, aparelho, opcoesCookie(UM_ANO_MS));
     return { ok: true };
   }
 

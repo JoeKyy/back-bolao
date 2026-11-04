@@ -1,12 +1,12 @@
 import { Injectable } from "@nestjs/common";
 import { conflito, invalido, muitasTentativas, naoAutenticado, naoEncontrado, proibido } from "../common/erros";
-import { LimitesService } from "../common/limites.service";
+import { LimitesService, agruparIp } from "../common/limites.service";
 import { TOKEN_RE, hashToken, novoTokenSecreto } from "../common/tokens";
 import { gerarPix } from "../pix/pix";
 import { PrismaService } from "../prisma/prisma.service";
 import { formatDezena, precoJogo, validarDezenas } from "../shared/regras";
 import type { ConvitePublico, JogoDTO, PainelParticipante, ParticipanteDTO } from "../shared/tipos";
-import { bolaoDTO, carregarBolao, registrarEvento, resumoDe, travarBolao, type BolaoCompleto } from "../boloes/carregar";
+import { aceitaApostas, bolaoDTO, carregarBolao, registrarEvento, resumoDe, travarBolao, type BolaoCompleto } from "../boloes/carregar";
 import { MAX_JOGOS_POR_BOLAO } from "../boloes/boloes.service";
 
 export const INSCRICAO_JANELA_MS = 10 * 60 * 1000;
@@ -49,35 +49,44 @@ export class PublicoService {
       concurso: b.concurso,
       dataSorteio: b.dataSorteio?.toISOString() ?? null,
       precoSimples: b.precoSimples,
-      inscricoesAbertas: b.inscricoesAbertas,
+      inscricoesAbertas: aceitaApostas(b),
       jaInscrito: (await this.participanteDoAparelho(b.id, dispositivo)) !== null,
     };
   }
 
-  /** Inscreve e devolve o token do aparelho (o mesmo, se já havia um válido). */
+  /**
+   * Inscreve e devolve o token do aparelho. Tudo sob a trava do bolão (SEC-05): checagem do
+   * aparelho, limite por IP e teto, para inscrições paralelas não criarem duplicatas.
+   * O token do aparelho só é reaproveitado se o servidor já o emitiu (SEC-07).
+   */
   async inscrever(convite: string, nome: string, whatsapp: string, ip: string, dispositivo: string | undefined) {
     const b = await this.bolaoDoConvite(convite);
-    if (await this.participanteDoAparelho(b.id, dispositivo)) return { dispositivo: dispositivo! };
-    if (!b.inscricoesAbertas) throw conflito("inscricoes_encerradas", "As inscrições deste bolão estão encerradas.");
-
-    const chave = `inscricao:${b.id}:${ip}`;
-    if ((await this.limites.contar(chave, INSCRICAO_JANELA_MS)) >= INSCRICAO_MAX_POR_IP) {
-      throw muitasTentativas("Muitas inscrições deste aparelho. Aguarde alguns minutos.");
-    }
-    const token = dispositivo && TOKEN_RE.test(dispositivo) ? dispositivo : novoTokenSecreto();
-
-    await this.prisma.$transaction(async (tx) => {
+    const chave = `inscricao:${b.id}:${agruparIp(ip)}`;
+    return this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, b.id);
+      const valido = dispositivo && TOKEN_RE.test(dispositivo) ? dispositivo : undefined;
+      if (valido) {
+        const ja = await tx.dispositivoAcesso.findFirst({
+          where: { tokenHash: hashToken(valido), participante: { bolaoId: b.id } },
+          select: { id: true },
+        });
+        if (ja) return { dispositivo: valido };
+      }
       const atual = await tx.bolao.findUniqueOrThrow({ where: { id: b.id } });
-      if (!atual.inscricoesAbertas) throw conflito("inscricoes_encerradas", "As inscrições deste bolão estão encerradas.");
+      if (!aceitaApostas(atual)) throw conflito("inscricoes_encerradas", "As inscrições deste bolão estão encerradas.");
+      const recentes = await tx.tentativa.count({ where: { chave, criadoEm: { gte: new Date(Date.now() - INSCRICAO_JANELA_MS) } } });
+      if (recentes >= INSCRICAO_MAX_POR_IP) throw muitasTentativas("Muitas inscrições deste aparelho. Aguarde alguns minutos.");
       const n = await tx.participante.count({ where: { bolaoId: b.id } });
       if (n >= atual.maxParticipantes) throw conflito("bolao_cheio", "Este bolão atingiu o número máximo de participantes.");
+
+      const emitido = valido ? (await tx.dispositivoAcesso.findFirst({ where: { tokenHash: hashToken(valido) }, select: { id: true } })) !== null : false;
+      const token = emitido ? valido! : novoTokenSecreto();
       const p = await tx.participante.create({ data: { bolaoId: b.id, nome, whatsapp } });
       await tx.dispositivoAcesso.create({ data: { tokenHash: hashToken(token), participanteId: p.id } });
+      await tx.tentativa.create({ data: { chave } });
       await registrarEvento(tx, b.id, "inscricao", `${nome} entrou pelo link de convite.`, { participanteId: p.id });
+      return { dispositivo: token };
     });
-    await this.limites.registrar(chave);
-    return { dispositivo: token };
   }
 
   private montarPainel(b: BolaoCompleto, meuId: number | null, visaoOrganizador: boolean): PainelParticipante {
@@ -151,14 +160,13 @@ export class PublicoService {
     const { b, meuId } = await this.exigirParticipante(convite, dispositivo);
     const v = validarDezenas(dezenas, { min: 6, max: b.maxDezenasParticipante });
     if (!v.ok) throw invalido("jogo_invalido", v.erro);
-    const chave = `jogo:${ip}`;
-    if ((await this.limites.contar(chave, JOGO_JANELA_MS)) >= JOGO_MAX_POR_IP) {
+    if (!(await this.limites.consumir(`jogo:${agruparIp(ip)}`, JOGO_MAX_POR_IP, JOGO_JANELA_MS))) {
       throw muitasTentativas("Muitos jogos em pouco tempo. Aguarde alguns minutos.");
     }
     await this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, b.id);
       const atual = await tx.bolao.findUniqueOrThrow({ where: { id: b.id } });
-      if (!atual.inscricoesAbertas) throw conflito("inscricoes_encerradas", "As inscrições estão encerradas; não dá para incluir jogos.");
+      if (!aceitaApostas(atual)) throw conflito("inscricoes_encerradas", "As inscrições estão encerradas; não dá para incluir jogos.");
       const meus = await tx.jogo.count({ where: { participanteId: meuId } });
       if (meus >= JOGOS_MAX_POR_PARTICIPANTE) throw conflito("limite_jogos", "Você atingiu o limite de jogos por participante.");
       if ((await tx.jogo.count({ where: { bolaoId: b.id } })) >= MAX_JOGOS_POR_BOLAO) {
@@ -174,7 +182,6 @@ export class PublicoService {
         { participanteId: meuId, dezenas: v.dezenas },
       );
     });
-    await this.limites.registrar(chave);
   }
 
   async removerJogo(convite: string, dispositivo: string | undefined, jogoId: number) {
@@ -185,7 +192,7 @@ export class PublicoService {
       const j = atual.jogos.find((x) => x.id === jogoId);
       // Jogo de outro participante responde igual a jogo inexistente.
       if (!j || j.participanteId !== meuId) throw naoEncontrado("Jogo não encontrado.");
-      if (!atual.inscricoesAbertas) throw conflito("inscricoes_encerradas", "As inscrições estão encerradas; fale com o organizador.");
+      if (!aceitaApostas(atual)) throw conflito("inscricoes_encerradas", "As inscrições estão encerradas; fale com o organizador.");
       if (j.registrado) throw proibido("Este jogo já foi registrado na Caixa; fale com o organizador.");
       const eu = resumoDe(atual).participantes.find((p) => p.id === meuId)!;
       const preco = precoJogo(j.dezenas.length, atual.precoSimples);

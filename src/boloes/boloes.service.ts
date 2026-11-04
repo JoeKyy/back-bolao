@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { conflito, invalido, naoEncontrado } from "../common/erros";
 import { novoConvite } from "../common/tokens";
 import { CaixaService } from "../caixa/caixa.service";
@@ -6,7 +6,7 @@ import { normalizarChave } from "../pix/pix";
 import { PrismaService } from "../prisma/prisma.service";
 import { formatBRL, formatDezena, validarDezenas } from "../shared/regras";
 import type { BolaoNaLista, EventoDTO, ResumoAdmin } from "../shared/tipos";
-import { bolaoAdminDTO, carregarBolao, registrarEvento, resumoDe, travarBolao } from "./carregar";
+import { bolaoAdminDTO, bolaoTravado, carregarBolao, exigirConfirmacao, registrarEvento, resumoDe, sorteioPassou, travarBolao } from "./carregar";
 import type {
   AtualizarBolaoDto,
   CriarBolaoDto,
@@ -31,6 +31,8 @@ export function celulaCsv(v: string | number): string {
 
 @Injectable()
 export class BoloesService {
+  private readonly log = new Logger("Boloes");
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly caixa: CaixaService,
@@ -83,7 +85,7 @@ export class BoloesService {
     return { bolao: bolaoAdminDTO(b), ...r };
   }
 
-  async atualizar(id: number, dto: AtualizarBolaoDto) {
+  async atualizar(id: number, dto: AtualizarBolaoDto, confirmar = false) {
     let pixChave: string | null | undefined = undefined;
     if (dto.pixChave !== undefined) {
       if (dto.pixChave === null || dto.pixChave === "") pixChave = null;
@@ -101,6 +103,17 @@ export class BoloesService {
     await this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, id);
       const antes = await tx.bolao.findUniqueOrThrow({ where: { id } });
+      const mudaPreco = dto.precoSimples !== undefined && dto.precoSimples !== antes.precoSimples;
+      const mudaData =
+        dataSorteio !== undefined && (dataSorteio?.getTime() ?? null) !== (antes.dataSorteio?.getTime() ?? null);
+      // Preço muda o devido de todos; data pode reabrir apostas depois do sorteio (SEC-04).
+      if (mudaPreco || mudaData) exigirConfirmacao(antes, confirmar);
+      if (mudaData) {
+        await registrarEvento(tx, id, "data_alterada", `Data do sorteio alterada${bolaoTravado(antes) ? " depois do sorteio/resultado (confirmado)" : ""}.`, {
+          antes: antes.dataSorteio?.toISOString() ?? null,
+          depois: dataSorteio?.toISOString() ?? null,
+        });
+      }
       const temJogos = (await tx.jogo.count({ where: { bolaoId: id } })) > 0;
       if (dto.precoSimples !== undefined && dto.precoSimples !== antes.precoSimples && temJogos) {
         // Muda o valor devido de todo mundo: fica registrado.
@@ -130,12 +143,26 @@ export class BoloesService {
     const b = await this.prisma.bolao.findUnique({ where: { id } });
     if (!b) throw naoEncontrado("Bolão não encontrado.");
     if (confirmacao.trim() !== b.nome) throw invalido("confirmacao", "Para excluir, digite o nome exato do bolão.");
+    const [participantes, jogos, arrecadado] = await Promise.all([
+      this.prisma.participante.count({ where: { bolaoId: id } }),
+      this.prisma.jogo.count({ where: { bolaoId: id } }),
+      this.prisma.participante.aggregate({ where: { bolaoId: id }, _sum: { valorPago: true } }),
+    ]);
     await this.prisma.bolao.delete({ where: { id } });
+    // O histórico do bolão vai junto na cascata; fica ao menos este registro no log do servidor.
+    this.log.warn(
+      `Bolão ${id} excluído: ${participantes} participante(s), ${jogos} jogo(s), arrecadado ${formatBRL(arrecadado._sum.valorPago ?? 0)}, resultado ${b.resultadoDezenas.length === 6 ? "lançado" : "não lançado"}.`,
+    );
   }
 
   async definirInscricoes(id: number, abertas: boolean) {
     await this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, id);
+      if (abertas) {
+        const b = await tx.bolao.findUniqueOrThrow({ where: { id } });
+        if (b.resultadoDezenas.length === 6) throw conflito("tem_resultado", "Com o resultado lançado não dá para reabrir as inscrições.");
+        if (sorteioPassou(b)) throw conflito("sorteio_passou", "O horário do sorteio já passou. Ajuste a data do sorteio antes de reabrir.");
+      }
       await tx.bolao.update({ where: { id }, data: { inscricoesAbertas: abertas } });
       await registrarEvento(tx, id, abertas ? "inscricoes_abertas" : "inscricoes_encerradas", abertas ? "Inscrições reabertas." : "Inscrições encerradas.");
     });
@@ -161,18 +188,24 @@ export class BoloesService {
   }
 
   async atualizarParticipante(bolaoId: number, id: number, dto: ParticipanteDto) {
-    const r = await this.prisma.participante.updateMany({
-      where: { id, bolaoId },
-      data: { nome: dto.nome, whatsapp: dto.whatsapp ?? "" },
+    await this.prisma.$transaction(async (tx) => {
+      const p = await tx.participante.findFirst({ where: { id, bolaoId } });
+      if (!p) throw naoEncontrado("Participante não encontrado.");
+      await tx.participante.update({ where: { id }, data: { nome: dto.nome, whatsapp: dto.whatsapp ?? "" } });
+      if (p.nome !== dto.nome || p.whatsapp !== (dto.whatsapp ?? "")) {
+        await registrarEvento(tx, bolaoId, "participante_editado", `Dados de ${p.nome} editados${p.nome !== dto.nome ? ` (novo nome: ${dto.nome})` : ""}.`, {
+          participanteId: id,
+        });
+      }
     });
-    if (r.count === 0) throw naoEncontrado("Participante não encontrado.");
   }
 
-  async removerParticipante(bolaoId: number, id: number) {
+  async removerParticipante(bolaoId: number, id: number, confirmar = false) {
     await this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, bolaoId);
       const p = await tx.participante.findFirst({ where: { id, bolaoId } });
       if (!p) throw naoEncontrado("Participante não encontrado.");
+      exigirConfirmacao(await tx.bolao.findUniqueOrThrow({ where: { id: bolaoId } }), confirmar);
       const registrados = await tx.jogo.count({ where: { participanteId: id, registrado: true } });
       if (registrados > 0) {
         throw conflito("jogos_registrados", "Este participante tem jogos já registrados na Caixa. Desmarque o registro antes de remover.");
@@ -185,15 +218,13 @@ export class BoloesService {
     });
   }
 
-  async definirPagamento(bolaoId: number, id: number, dto: PagamentoDto) {
+  async definirPagamento(bolaoId: number, id: number, dto: PagamentoDto, confirmar = false) {
     await this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, bolaoId);
       const b = await carregarBolao(tx, bolaoId);
       const p = b.participantes.find((x) => x.id === id);
       if (!p) throw naoEncontrado("Participante não encontrado.");
-      if (b.resultadoDezenas.length === 6 && !dto.confirmarComResultado) {
-        throw conflito("tem_resultado", "O resultado já foi registrado. Mudar pagamento agora altera o rateio; confirme para continuar.");
-      }
+      exigirConfirmacao(b, confirmar || !!dto.confirmarComResultado);
       const devido = resumoDe(b).participantes.find((x) => x.id === id)!.devido;
       const valor = dto.valor ?? devido;
       if (valor === p.valorPago) return;
@@ -204,13 +235,14 @@ export class BoloesService {
         depois: valor,
         devido,
         comResultado: b.resultadoDezenas.length === 6,
+        travado: bolaoTravado(b),
       });
     });
   }
 
   // ---------- jogos ----------
 
-  async adicionarJogos(bolaoId: number, dto: JogosDto) {
+  async adicionarJogos(bolaoId: number, dto: JogosDto, confirmar = false) {
     const validos: number[][] = [];
     for (let i = 0; i < dto.jogos.length; i++) {
       const r = validarDezenas(dto.jogos[i]);
@@ -221,12 +253,14 @@ export class BoloesService {
       await travarBolao(tx, bolaoId);
       const p = await tx.participante.findFirst({ where: { id: dto.participanteId, bolaoId } });
       if (!p) throw naoEncontrado("Participante não encontrado.");
+      const bolao = await tx.bolao.findUniqueOrThrow({ where: { id: bolaoId } });
+      exigirConfirmacao(bolao, confirmar);
       const total = await tx.jogo.count({ where: { bolaoId } });
       if (total + validos.length > MAX_JOGOS_POR_BOLAO) throw conflito("limite_jogos", "Limite de jogos do bolão atingido.");
       await tx.jogo.createMany({
         data: validos.map((dezenas) => ({ bolaoId, participanteId: p.id, dezenas, surpresinha: !!dto.surpresinha })),
       });
-      await registrarEvento(tx, bolaoId, "jogos_adicionados", `${validos.length} jogo(s) para ${p.nome} (pelo organizador).`, {
+      await registrarEvento(tx, bolaoId, "jogos_adicionados", `${validos.length} jogo(s) para ${p.nome} (pelo organizador${bolaoTravado(bolao) ? ", depois do sorteio, confirmado" : ""}).`, {
         participanteId: p.id,
         jogos: validos,
       });
@@ -234,12 +268,13 @@ export class BoloesService {
     });
   }
 
-  async removerJogo(bolaoId: number, id: number) {
+  async removerJogo(bolaoId: number, id: number, confirmar = false) {
     await this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, bolaoId);
       const j = await tx.jogo.findFirst({ where: { id, bolaoId }, include: { participante: true } });
       if (!j) throw naoEncontrado("Jogo não encontrado.");
       if (j.registrado) throw conflito("jogo_registrado", "Jogo já registrado na Caixa. Desmarque o registro antes de remover.");
+      exigirConfirmacao(await tx.bolao.findUniqueOrThrow({ where: { id: bolaoId } }), confirmar);
       await tx.jogo.delete({ where: { id } });
       await registrarEvento(tx, bolaoId, "jogo_removido", `Jogo ${j.dezenas.map(formatDezena).join(" ")} de ${j.participante.nome} removido.`, {
         jogoId: id,
@@ -248,7 +283,7 @@ export class BoloesService {
     });
   }
 
-  async registrarJogo(bolaoId: number, id: number, dto: RegistroJogoDto) {
+  async registrarJogo(bolaoId: number, id: number, dto: RegistroJogoDto, confirmar = false) {
     await this.prisma.$transaction(async (tx) => {
       await travarBolao(tx, bolaoId);
       const j = await tx.jogo.findFirst({ where: { id, bolaoId } });
@@ -257,6 +292,8 @@ export class BoloesService {
       if (b.resultadoDezenas.length === 6) {
         throw conflito("tem_resultado", "O resultado já foi registrado; não dá para mudar o registro dos jogos.");
       }
+      // Depois do horário do sorteio, marcar registro só com confirmação (esqueceu de clicar).
+      if (j.registrado !== dto.registrado) exigirConfirmacao(b, confirmar);
       await tx.jogo.update({
         where: { id },
         data: { registrado: dto.registrado, comprovante: dto.comprovante === undefined ? undefined : dto.comprovante || null },

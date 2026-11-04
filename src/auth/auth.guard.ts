@@ -1,7 +1,8 @@
 import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
 import type { Request } from "express";
 import { naoAutenticado } from "../common/erros";
-import { AuthService, COOKIE_SESSAO } from "./auth.service";
+import { COOKIE_SESSAO } from "../common/cookies";
+import { AuthService } from "./auth.service";
 
 export type RequestComAdmin = Request & { adminId?: number };
 

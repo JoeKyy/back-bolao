@@ -1,13 +1,14 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Req, Res } from "@nestjs/common";
 import { Transform } from "class-transformer";
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
 import type { Request, Response } from "express";
 import { lerCookie } from "../auth/auth.guard";
-import { ipDe, opcoesCookie } from "../auth/auth.controller";
-import { AuthService, COOKIE_SESSAO } from "../auth/auth.service";
+import { ipDe } from "../auth/auth.controller";
+import { AuthService } from "../auth/auth.service";
+import { COOKIE_DISPOSITIVO, COOKIE_SESSAO, opcoesCookie } from "../common/cookies";
+import { IdPipe } from "../common/id.pipe";
 import { PublicoService } from "./publico.service";
 
-export const COOKIE_DISPOSITIVO = "bolao_aparelho";
 const SEIS_MESES_MS = 180 * 24 * 60 * 60 * 1000;
 const aparar = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
 
@@ -75,7 +76,7 @@ export class PublicoController {
   @HttpCode(204)
   async removerJogo(
     @Param("convite") convite: string,
-    @Param("jid", new ParseIntPipe({ errorHttpStatusCode: 404 })) jid: number,
+    @Param("jid", IdPipe) jid: number,
     @Req() req: Request,
   ) {
     await this.publico.removerJogo(convite, lerCookie(req, COOKIE_DISPOSITIVO), jid);

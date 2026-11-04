@@ -19,7 +19,7 @@ export async function subirApp() {
 export async function limpar(prisma: PrismaService) {
   if (!/\/bolao_teste(\?|$)/.test(process.env.DATABASE_URL ?? "")) throw new Error("limpar() só no banco de teste");
   await prisma.$executeRawUnsafe(
-    `TRUNCATE "Evento","Jogo","DispositivoAcesso","Participante","Bolao","Sessao","Tentativa" RESTART IDENTITY CASCADE`,
+    `TRUNCATE "Evento","Jogo","DispositivoAcesso","Participante","Bolao","Sessao","Tentativa","AparelhoOrganizador" RESTART IDENTITY CASCADE`,
   );
 }
 

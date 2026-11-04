@@ -1,4 +1,4 @@
-import { lerConcursoCaixa } from "./caixa.service";
+import { lerComLimite, lerConcursoCaixa } from "./caixa.service";
 
 // Recorte real da resposta de servicebus2.caixa.gov.br (concurso 3080, 01/11/2026).
 const REAL = {
@@ -43,5 +43,29 @@ describe("lerConcursoCaixa", () => {
   it("faixa com valor estranho vira zero, não NaN", () => {
     const r = lerConcursoCaixa({ ...REAL, listaRateioPremio: [{ faixa: 2, valorPremio: "muito" }] });
     expect(r?.premios).toEqual({ sena: 0, quina: 0, quadra: 0 });
+  });
+
+  it("SEC-09: prêmio absurdo (1e300) invalida o resultado inteiro", () => {
+    const hostil = { ...REAL, listaRateioPremio: [{ faixa: 1, numeroDeGanhadores: 1, valorPremio: 1e300 }] };
+    expect(lerConcursoCaixa(hostil)).toBeNull();
+  });
+});
+
+describe("lerComLimite", () => {
+  it("SEC-09: aborta resposta de 1 MB sem content-length", async () => {
+    const grande = new Response(new ReadableStream({
+      start(c) {
+        for (let i = 0; i < 16; i++) c.enqueue(new Uint8Array(65_536));
+        c.close();
+      },
+    }));
+    await expect(lerComLimite(grande)).rejects.toThrow("grande demais");
+  });
+  it("recusa pelo content-length declarado", async () => {
+    const r = new Response("{}", { headers: { "content-length": "999999" } });
+    await expect(lerComLimite(r)).rejects.toThrow("grande demais");
+  });
+  it("lê resposta pequena", async () => {
+    expect(await lerComLimite(new Response('{"a":1}'))).toBe('{"a":1}');
   });
 });

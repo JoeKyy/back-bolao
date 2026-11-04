@@ -1,5 +1,5 @@
 import type { Bolao, Jogo, Participante } from "@prisma/client";
-import { naoEncontrado } from "../common/erros";
+import { conflito, naoEncontrado } from "../common/erros";
 import type { Tx } from "../prisma/prisma.service";
 import type { BolaoAdminDTO, BolaoDTO } from "../shared/tipos";
 import { montarResumo, type Resumo } from "./resumo";
@@ -23,6 +23,15 @@ export function premiosDe(b: Bolao) {
     : null;
 }
 
+/** O sorteio já começou (ou passou)? Sem data, só o resultado trava. */
+export const sorteioPassou = (b: Bolao, agora = Date.now()) => !!b.dataSorteio && b.dataSorteio.getTime() <= agora;
+
+/** Depois do sorteio ou com resultado: mudanças que mexem no rateio exigem confirmação (SEC-04). */
+export const bolaoTravado = (b: Bolao) => b.resultadoDezenas.length === 6 || sorteioPassou(b);
+
+/** Aceita inscrição e jogo novo? Nunca depois do sorteio nem com resultado (SEC-01). */
+export const aceitaApostas = (b: Bolao) => b.inscricoesAbertas && !bolaoTravado(b);
+
 export function bolaoDTO(b: Bolao): BolaoDTO {
   const premios = premiosDe(b);
   return {
@@ -34,7 +43,8 @@ export function bolaoDTO(b: Bolao): BolaoDTO {
     precoSimples: b.precoSimples,
     maxDezenasParticipante: b.maxDezenasParticipante,
     maxParticipantes: b.maxParticipantes,
-    inscricoesAbertas: b.inscricoesAbertas,
+    inscricoesAbertas: aceitaApostas(b),
+    travado: bolaoTravado(b),
     instrucoes: b.instrucoes,
     estimativaPremio: num(b.estimativaPremio),
     resultado: premios
@@ -78,4 +88,19 @@ export async function registrarEvento(
   dados?: Record<string, unknown>,
 ) {
   await tx.evento.create({ data: { bolaoId, tipo, descricao, dados: dados as object | undefined } });
+}
+
+/**
+ * Com o bolão travado, operações que mudam o rateio só passam com `?confirmar=1` (SEC-04).
+ * O front pergunta ao organizador e repete a chamada com a confirmação.
+ */
+export function exigirConfirmacao(b: Bolao, confirmado: boolean) {
+  if (bolaoTravado(b) && !confirmado) {
+    throw conflito(
+      "bolao_travado",
+      b.resultadoDezenas.length === 6
+        ? "O resultado já foi lançado. Esta mudança altera o rateio; confirme para continuar."
+        : "O horário do sorteio já passou. Esta mudança altera o rateio; confirme para continuar.",
+    );
+  }
 }

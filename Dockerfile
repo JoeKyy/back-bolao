@@ -1,4 +1,5 @@
-FROM node:22-alpine AS base
+# Fixada por digest (SEC-12). Atualizar: conferir o digest novo de node:22-alpine e trocar aqui.
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS base
 WORKDIR /app
 RUN corepack enable
 
