@@ -18,11 +18,15 @@ services:
       # Sem valor padrão: sem senha definida no .env o compose recusa subir.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
       POSTGRES_DB: ${POSTGRES_DB:-bolao}
+      # Senha do papel só de dados (BAUD-07). Vazia no desenvolvimento local.
+      BOLAO_APP_PASSWORD: ${BOLAO_APP_PASSWORD:-}
     ports:
       # Só na interface local. Nunca exposto para a rede.
       - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Roda só na primeira criação do volume.
+      - ${INITDB_DIR:-./deploy/initdb}:/docker-entrypoint-initdb.d:ro
     logging: *logging
     mem_limit: 512m
     cpus: 1
@@ -35,6 +39,8 @@ services:
 
   api:
     build: .
+    # No servidor a imagem vem pronta do CI (docker save | docker load) com a etiqueta do commit.
+    image: bolao-api:${API_TAG:-local}
     profiles: ["servidor"]
     restart: unless-stopped
     # SEC-02: rede do host. Com porta publicada, a conexão do nginx chegaria do gateway da bridge
@@ -49,7 +55,9 @@ services:
       HOST: 127.0.0.1
       PORT: ${API_PORT:-3333}
       TRUST_PROXY: loopback
-      DATABASE_URL: postgresql://${POSTGRES_USER:-bolao}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT:-5433}/${POSTGRES_DB:-bolao}?schema=public
+      # A API conecta com o papel só de dados; as migrações usam o dono (BAUD-07).
+      DATABASE_URL: postgresql://bolao_app:${BOLAO_APP_PASSWORD:?defina BOLAO_APP_PASSWORD no .env}@127.0.0.1:${POSTGRES_PORT:-5433}/${POSTGRES_DB:-bolao}?schema=public
+      MIGRATION_DATABASE_URL: postgresql://${POSTGRES_USER:-bolao}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT:-5433}/${POSTGRES_DB:-bolao}?schema=public
       CORS_ORIGINS: ${CORS_ORIGINS:?defina CORS_ORIGINS no .env}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}

@@ -26,4 +26,8 @@ COPY --from=build /app/prisma ./prisma
 COPY package.json ./
 USER node
 EXPOSE 3333
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main.js"]
+# BAUD-07 (como o AUD-07 do gestor): as migrações rodam com MIGRATION_DATABASE_URL (papel dono do
+# schema) e a API sobe SEM essa credencial, com DATABASE_URL (papel só de dados). O `env -u` tira
+# a credencial das migrações do ambiente da API: um processo comprometido não herda o papel mais
+# poderoso. Sem MIGRATION_DATABASE_URL tudo usa DATABASE_URL (desenvolvimento local).
+CMD ["sh", "-c", "DATABASE_URL=\"${MIGRATION_DATABASE_URL:-$DATABASE_URL}\" npx prisma migrate deploy && env -u MIGRATION_DATABASE_URL node dist/main.js"]
