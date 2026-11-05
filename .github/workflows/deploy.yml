@@ -1,0 +1,195 @@
+name: Deploy
+
+# Economia (a VPS tem pouco disco e memória): só publica o que mexe no código. Mudança só de
+# documentação ou de modelo de .env não dispara nada. Promova em LOTE (vários commits no dev, um
+# PR para homolog), em vez de um deploy por commit.
+on:
+  # Produção só por disparo manual na main, com a frase de confirmação (o plano gratuito do
+  # GitHub não oferece aprovação obrigatória em repositório privado). Homologação publica sozinha.
+  workflow_dispatch:
+    inputs:
+      confirmar:
+        description: 'Para publicar em PRODUÇÃO (branch main), digite: publicar producao'
+        required: false
+        default: ''
+  push:
+    branches: [main, homolog, dev]
+    paths-ignore: ["**/*.md", "deploy/env.*.example", "auditoria-*/**"]
+  pull_request:
+    branches: [main, homolog, dev]
+    paths-ignore: ["**/*.md", "deploy/env.*.example", "auditoria-*/**"]
+
+permissions:
+  contents: read
+
+# Um deploy por ambiente por vez, sem cancelar o que já começou.
+concurrency:
+  group: deploy-${{ github.ref }}
+  # Verificação de dev e de PR: o commit novo cancela o anterior. Deploy (homolog e main): nunca cancela.
+  cancel-in-progress: ${{ github.ref == 'refs/heads/dev' || github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: Lint, tipos, testes, build e audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - run: node scripts/gerar-contrato.mjs --conferir
+      - run: pnpm audit --prod --audit-level=high
+
+  e2e:
+    name: Testes ponta a ponta (Postgres real)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bolao
+          # Banco descartável do runner; a senha é única por execução (nada fixo no repositório).
+          POSTGRES_PASSWORD: ci${{ github.run_id }}${{ github.run_attempt }}
+          POSTGRES_DB: bolao_teste
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://bolao:ci${{ github.run_id }}${{ github.run_attempt }}@localhost:5432/bolao_teste?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma:generate
+      - run: pnpm test:e2e
+
+  imagem:
+    name: Construir a imagem Docker (só em PR para homolog ou main)
+    if: github.event_name == 'pull_request' && (github.base_ref == 'homolog' || github.base_ref == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (sem publicar)
+        run: docker build -t bolao-api:ci .
+
+  guarda:
+    name: Origem do commit
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Conferir se veio pela esteira
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ github.sha }}"
+          if ! RESPOSTA=$(gh api "repos/${{ github.repository }}/commits/$SHA/pulls" 2>&1); then
+            echo "::error::Não consegui consultar a origem do commit $SHA: $RESPOSTA"
+            exit 1
+          fi
+          ORIGEM=$(echo "$RESPOSTA" | jq -r '.[] | select(.base.ref=="main") | .head.ref' | head -1)
+          echo "commit $SHA veio de: ${ORIGEM:-(nenhum pull request)}"
+          if [ -z "$ORIGEM" ]; then
+            echo "::error::Este commit entrou direto na main, sem pull request."
+            exit 1
+          fi
+          case "$ORIGEM" in
+            homolog|hotfix/*) echo "ok." ;;
+            *) echo "::error::O pull request veio de '$ORIGEM', que não é homolog nem hotfix/*."; exit 1 ;;
+          esac
+
+  deploy:
+    name: Publicar na VPS
+    needs: [verify, e2e, guarda]
+    # Homologação: push na branch homolog. Produção: disparo manual na main com a frase certa
+    # (e só se a origem do commit passou pela guarda).
+    if: |
+      always() && needs.verify.result == 'success' && needs.e2e.result == 'success'
+      && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/homolog')
+        || (
+          github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+          && inputs.confirmar == 'publicar producao' && needs.guarda.result == 'success'
+        )
+      )
+    runs-on: ubuntu-latest
+    # Os ambientes do GitHub guardam os segredos de cada destino. Produção só sai por disparo manual
+    # com confirmação (ver `on.workflow_dispatch`).
+    environment: ${{ github.ref == 'refs/heads/main' && 'producao' || 'homologacao' }}
+    env:
+      AMBIENTE: ${{ github.ref == 'refs/heads/main' && 'producao' || 'homolog' }}
+      URL_API: ${{ vars.URL_API }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preparar SSH (chave do deploy e host fixado)
+        env:
+          CHAVE: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<CFG
+          Host vps
+            HostName ${{ secrets.DEPLOY_HOST }}
+            Port ${{ secrets.DEPLOY_PORT }}
+            User deploy
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          CFG
+
+      - name: Este commit já está no ar?
+        id: estado
+        run: |
+          ATUAL=$(ssh vps "estado $AMBIENTE back" | awk '/^atual:/ {print $2}')
+          echo "no ar: ${ATUAL:-nenhum}"
+          if [ "$ATUAL" = "${{ github.sha }}" ]; then echo "ja=1" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Construir a imagem
+        if: steps.estado.outputs.ja != '1'
+        run: docker build -t bolao-api:${{ github.sha }} .
+
+      - name: Enviar a imagem e o compose para a VPS
+        if: steps.estado.outputs.ja != '1'
+        run: |
+          docker save bolao-api:${{ github.sha }} | gzip | ssh vps "carregar-imagem $AMBIENTE back ${{ github.sha }}"
+          ssh vps "atualizar-compose $AMBIENTE back" < docker-compose.yml
+
+      - name: Implantar (migra, sobe e confere a saúde; volta para a anterior se falhar)
+        if: steps.estado.outputs.ja != '1'
+        run: ssh vps "implantar $AMBIENTE back ${{ github.sha }}"
+
+      - name: Verificar saúde pelo endereço público
+        run: |
+          for i in $(seq 1 18); do
+            CODE=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$URL_API/saude" || true)
+            echo "tentativa $i: HTTP $CODE"
+            if [ "$CODE" = "200" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::A API não respondeu com saúde em 3 minutos depois do deploy."
+          exit 1
+
+      - name: Conferir contrato de tipos com o front (só avisa)
+        run: |
+          LOCAL=$(cat src/shared/contrato.json | jq -S -c .)
+          REMOTO=$(curl -s -m 10 "$URL_API/saude/contrato" | jq -S -c . || true)
+          [ "$LOCAL" = "$REMOTO" ] && echo "contrato igual ao publicado" || echo "::warning::contrato da API publicada difere do deste commit: $REMOTO"

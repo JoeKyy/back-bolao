@@ -12,6 +12,8 @@ export type FonteResultado = "caixa" | "manual";
 export interface ErroApi {
   codigo: string;
   mensagem: string;
+  /** Só em `entrada_invalida`: motivo fixo por campo (chave = nome do campo no corpo da requisição). */
+  campos?: Record<string, string>;
 }
 
 export interface BolaoNaLista {
@@ -43,7 +45,10 @@ export interface BolaoDTO {
   precoSimples: number;
   maxDezenasParticipante: number;
   maxParticipantes: number;
+  /** Efetivo: falso também depois do horário do sorteio ou com resultado lançado. */
   inscricoesAbertas: boolean;
+  /** Depois do sorteio (ou com resultado): mudanças de dinheiro exigem confirmação do organizador. */
+  travado: boolean;
   instrucoes: string;
   estimativaPremio: number | null;
   resultado: ResultadoDTO | null;
@@ -92,8 +97,10 @@ export interface ParticipanteAdminDTO extends ParticipanteDTO {
 export interface Totais {
   devido: number;
   arrecadado: number;
-  /** Soma dos pesos (valor pago que conta para o rateio). */
+  /** Soma dos pesos no rateio: valor pago coberto por jogos REGISTRADOS na Caixa. */
   pesoTotal: number;
+  /** Soma de min(pago, devido) de todos: base da calculadora antes do registro dos jogos. */
+  pesoPrevisto: number;
   premioBolao: number | null;
   melhorFaixa: Faixa | null;
   jogos: number;
@@ -141,6 +148,8 @@ export interface PainelParticipante {
   participantes: ParticipanteDTO[];
   totais: Totais;
   chance: Chance;
+  /** Como a pessoa está identificada neste bolão: pela conta, só pelo aparelho, ou não participa. */
+  acesso: "conta" | "aparelho" | null;
 }
 
 export interface ConcursoCaixa {
@@ -161,4 +170,66 @@ export interface EventoDTO {
   tipo: string;
   descricao: string;
   criadoEm: string;
+}
+
+/** Conta logada. Perfis combináveis; sem nenhum é pessoa comum (só participa). */
+export interface Eu {
+  id: number;
+  nome: string;
+  email: string;
+  admin: boolean;
+  tesoureiro: boolean;
+}
+
+/** Visão do administrador sobre as contas (sem nada dos bolões dos outros além das contagens). */
+export interface UsuarioDTO {
+  id: number;
+  nome: string;
+  email: string;
+  admin: boolean;
+  tesoureiro: boolean;
+  ativo: boolean;
+  /** Conta criada, convite ainda não aceito (sem senha). */
+  pendente: boolean;
+  /** Bolões dos quais é tesoureiro. */
+  boloes: number;
+  /** Bolões dos quais participa com a conta. */
+  participacoes: number;
+  criadoEm: string;
+}
+
+/** Ação registrada sobre a conta (visível para a própria pessoa). */
+export interface AtividadeContaDTO {
+  id: number;
+  descricao: string;
+  /** Nome de quem fez, quando foi o administrador; nulo quando a própria pessoa. */
+  por: string | null;
+  criadoEm: string;
+}
+
+/** Um bolão de que a conta participa ("Minha área"). */
+export interface ParticipacaoDTO {
+  convite: string;
+  nome: string;
+  tipo: TipoBolao;
+  concurso: number | null;
+  dataSorteio: string | null;
+  situacao: Situacao;
+  devido: number;
+  pago: number;
+  jogos: number;
+  temResultado: boolean;
+  parte: number | null;
+}
+
+/** Convite gerado: o token aparece UMA vez, para o ADMIN repassar. */
+export interface ConviteOrganizadorCriado {
+  token: string;
+  expiraEm: string;
+}
+
+export interface ConviteOrganizadorPublico {
+  email: string;
+  nome: string;
+  tipo: "novo" | "troca";
 }

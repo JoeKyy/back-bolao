@@ -1,0 +1,29 @@
+name: Esteira
+
+on:
+  pull_request:
+    branches: [main, homolog]
+
+jobs:
+  promocao:
+    name: Caminho de promoção
+    runs-on: ubuntu-latest
+    steps:
+      - name: Conferir origem do pull request
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          echo "promoção pedida: $HEAD para $BASE"
+          case "$BASE:$HEAD" in
+            main:homolog)
+              echo "ok: homologação para produção." ;;
+            homolog:dev)
+              echo "ok: desenvolvimento para homologação." ;;
+            main:hotfix/*)
+              echo "::warning::Hotfix direto para produção, sem passar pela homologação. Depois, traga main de volta para dev e homolog." ;;
+            *)
+              echo "::error::'$HEAD' não pode ir direto para '$BASE'."
+              echo "O caminho é dev, homolog, main (ou hotfix/* para main, em emergência)."
+              exit 1 ;;
+          esac

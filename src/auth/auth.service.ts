@@ -2,18 +2,27 @@ import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import bcrypt from "bcryptjs";
 import { config } from "../common/config";
 import { muitasTentativas, naoAutenticado } from "../common/erros";
-import { LimitesService } from "../common/limites.service";
-import { hashToken, novoTokenSecreto } from "../common/tokens";
+import { LimitesService, agruparIp } from "../common/limites.service";
+import { TOKEN_RE, hashToken, novoTokenSecreto } from "../common/tokens";
+import { MailService } from "../mail/mail.service";
+import { ConvitesService } from "../usuarios/convites.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { exigirSenhaAceitavel } from "./senha";
 
-export const COOKIE_SESSAO = "bolao_sessao";
 export const SESSAO_DIAS = 7;
 /** Sem uso por este tempo, a sessão cai mesmo dentro do prazo absoluto. */
 export const SESSAO_OCIOSA_MS = 48 * 60 * 60 * 1000;
 export const LOGIN_JANELA_MS = 10 * 60 * 1000;
-export const LOGIN_MAX_POR_IP = 5;
-/** Teto global: protege contra força bruta distribuída entre muitos IPs. */
+export const LOGIN_MAX_POR_IP = 10;
+/** Teto global de FALHAS: protege contra força bruta distribuída entre muitos IPs. */
 export const LOGIN_MAX_GLOBAL = 30;
+const CHAVE_FALHA_GLOBAL = "login:falha";
+
+export interface SessaoValida {
+  id: number;
+  admin: boolean;
+  tesoureiro: boolean;
+}
 
 // Hash fixo usado quando o e-mail não existe, para o tempo de resposta não revelar isso.
 const HASH_FALSO = bcrypt.hashSync("senha-que-nao-existe-em-lugar-nenhum", 12);
@@ -25,6 +34,8 @@ export class AuthService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly limites: LimitesService,
+    private readonly convites: ConvitesService,
+    private readonly mail: MailService,
   ) {}
 
   /** Cria o organizador do .env no primeiro boot. Depois disso o .env não troca a senha. */
@@ -37,40 +48,75 @@ export class AuthService implements OnModuleInit {
       return;
     }
     await this.prisma.usuario.create({
-      data: { email: adminEmail, senhaHash: await bcrypt.hash(adminSenha, 12) },
+      data: { email: adminEmail, nome: "Administrador", admin: true, tesoureiro: true, senhaHash: await bcrypt.hash(adminSenha, 12) },
     });
     this.log.log("Organizador criado a partir do .env.");
   }
 
-  async entrar(email: string, senha: string, ip: string): Promise<{ token: string; expiraEm: Date }> {
-    const chaveIp = `login:ip:${ip}`;
-    const [porIp, global] = await Promise.all([
-      this.limites.contar(chaveIp, LOGIN_JANELA_MS),
-      this.limites.contar("login:global", LOGIN_JANELA_MS),
-    ]);
-    if (porIp >= LOGIN_MAX_POR_IP || global >= LOGIN_MAX_GLOBAL) {
+  async entrar(
+    email: string,
+    senha: string,
+    ip: string,
+    aparelho: string | undefined,
+  ): Promise<{ token: string; expiraEm: Date; aparelho: string }> {
+    // SEC-05: a tentativa é registrada ANTES de conferir a senha, de forma atômica. Requisições
+    // paralelas não passam todas pela mesma contagem antiga. BAUD-01: o login bem-sucedido NÃO
+    // devolve a tentativa. Antes ele zerava o contador do IP, e quem tinha uma conta qualquer
+    // intercalava logins válidos para testar senhas de outra conta sem nunca chegar ao teto.
+    const chaveIp = `login:ip:${agruparIp(ip)}`;
+    if (!(await this.limites.consumir(chaveIp, LOGIN_MAX_POR_IP, LOGIN_JANELA_MS))) {
       throw muitasTentativas("Muitas tentativas. Aguarde alguns minutos.");
     }
-
     const usuario = await this.prisma.usuario.findUnique({ where: { email: email.trim().toLowerCase() } });
+    // SEC-06/BAUD-01: o teto global de falhas só é dispensado no aparelho onde a PRÓPRIA conta
+    // que está entrando (e ativa) já entrou antes. O aparelho de outra conta, ou de conta
+    // desativada, não vale como passe para tentar a senha do administrador.
+    const dono = await this.aparelhoConhecido(aparelho);
+    const conhecido = !!usuario && usuario.ativo && dono === usuario.id;
+    if (!conhecido && (await this.limites.contar(CHAVE_FALHA_GLOBAL, LOGIN_JANELA_MS)) >= LOGIN_MAX_GLOBAL) {
+      throw muitasTentativas("Muitas tentativas no sistema. Aguarde alguns minutos ou entre pelo aparelho de sempre.");
+    }
+
     const confere = await bcrypt.compare(senha, usuario?.senhaHash ?? HASH_FALSO);
-    if (!usuario || !confere) {
-      await Promise.all([this.limites.registrar(chaveIp), this.limites.registrar("login:global")]);
+    // Conta desativada ou com convite pendente responde igual a senha errada: não revela quais
+    // contas existem.
+    if (!usuario || !usuario.senhaHash || !confere || !usuario.ativo) {
+      await this.limites.registrar(CHAVE_FALHA_GLOBAL);
       throw naoAutenticado("E-mail ou senha incorretos.");
     }
 
-    await this.limites.limpar(chaveIp);
     const token = novoTokenSecreto();
     const expiraEm = new Date(Date.now() + SESSAO_DIAS * 24 * 60 * 60 * 1000);
     await this.prisma.sessao.create({ data: { tokenHash: hashToken(token), usuarioId: usuario.id, expiraEm } });
-    return { token, expiraEm };
+
+    // Mesmo aparelho de antes: mantém o token. Senão, emite um novo (nunca aceita valor do cliente).
+    const tokenAparelho = dono === usuario.id ? aparelho! : novoTokenSecreto();
+    if (dono !== usuario.id) {
+      await this.prisma.aparelhoOrganizador.create({ data: { tokenHash: hashToken(tokenAparelho), usuarioId: usuario.id } });
+    }
+    return { token, expiraEm, aparelho: tokenAparelho };
+  }
+
+  /** Id do organizador dono do aparelho, ou null. */
+  private async aparelhoConhecido(token: string | undefined): Promise<number | null> {
+    if (!token || !TOKEN_RE.test(token)) return null;
+    const a = await this.prisma.aparelhoOrganizador.findUnique({ where: { tokenHash: hashToken(token) } });
+    return a?.usuarioId ?? null;
   }
 
   /** Devolve o id do organizador da sessão, ou null. Sessão vencida ou ociosa é apagada. */
-  async validar(token: string | undefined): Promise<number | null> {
+  /** Conta da sessão (id e perfis lidos do banco a cada requisição), ou null. Sessão vencida, ociosa ou de conta desativada cai. */
+  async validar(token: string | undefined): Promise<SessaoValida | null> {
     if (!token || token.length > 100) return null;
-    const s = await this.prisma.sessao.findUnique({ where: { tokenHash: hashToken(token) } });
+    const s = await this.prisma.sessao.findUnique({
+      where: { tokenHash: hashToken(token) },
+      include: { usuario: { select: { admin: true, tesoureiro: true, ativo: true } } },
+    });
     if (!s) return null;
+    if (!s.usuario.ativo) {
+      await this.prisma.sessao.deleteMany({ where: { usuarioId: s.usuarioId } });
+      return null;
+    }
     const agora = Date.now();
     if (s.expiraEm.getTime() <= agora || agora - s.ultimoUsoEm.getTime() > SESSAO_OCIOSA_MS) {
       await this.prisma.sessao.deleteMany({ where: { id: s.id } });
@@ -80,7 +126,28 @@ export class AuthService implements OnModuleInit {
     if (agora - s.ultimoUsoEm.getTime() > 60_000) {
       await this.prisma.sessao.update({ where: { id: s.id }, data: { ultimoUsoEm: new Date() } });
     }
-    return s.usuarioId;
+    return { id: s.usuarioId, admin: s.usuario.admin, tesoureiro: s.usuario.tesoureiro };
+  }
+
+  /** Últimas ações sobre a conta, para a própria pessoa conferir (BAUD-02). */
+  async atividade(usuarioId: number) {
+    const es = await this.prisma.eventoConta.findMany({ where: { usuarioId }, orderBy: { id: "desc" }, take: 20 });
+    const porIds = [...new Set(es.map((e) => e.porId).filter((x): x is number => x !== null))];
+    const nomes = new Map((await this.prisma.usuario.findMany({ where: { id: { in: porIds } }, select: { id: true, nome: true, email: true } })).map((u) => [u.id, u.nome || u.email]));
+    return es.map((e) => ({ id: e.id, descricao: e.descricao, por: e.porId === null ? null : nomes.get(e.porId) ?? "administrador", criadoEm: e.criadoEm.toISOString() }));
+  }
+
+  async eu(id: number) {
+    const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id } });
+    return { id: u.id, nome: u.nome, email: u.email, admin: u.admin, tesoureiro: u.tesoureiro };
+  }
+
+  /** Cria a sessão de quem acabou de definir a senha pelo convite. */
+  async abrirSessao(usuarioId: number): Promise<{ token: string; expiraEm: Date }> {
+    const token = novoTokenSecreto();
+    const expiraEm = new Date(Date.now() + SESSAO_DIAS * 24 * 60 * 60 * 1000);
+    await this.prisma.sessao.create({ data: { tokenHash: hashToken(token), usuarioId, expiraEm } });
+    return { token, expiraEm };
   }
 
   async sair(token: string | undefined) {
@@ -91,10 +158,64 @@ export class AuthService implements OnModuleInit {
   /** Troca a senha e derruba todas as sessões do organizador (inclusive a atual). */
   async trocarSenha(usuarioId: number, atual: string, nova: string) {
     const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id: usuarioId } });
-    if (!(await bcrypt.compare(atual, u.senhaHash))) throw naoAutenticado("Senha atual incorreta.");
-    await this.prisma.$transaction([
-      this.prisma.usuario.update({ where: { id: usuarioId }, data: { senhaHash: await bcrypt.hash(nova, 12) } }),
-      this.prisma.sessao.deleteMany({ where: { usuarioId } }),
-    ]);
+    if (!u.senhaHash || !(await bcrypt.compare(atual, u.senhaHash))) throw naoAutenticado("Senha atual incorreta.");
+    exigirSenhaAceitavel(nova, { email: u.email, nome: u.nome });
+    const senhaHash = await bcrypt.hash(nova, 12);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.usuario.update({ where: { id: usuarioId }, data: { senhaHash } });
+      await tx.sessao.deleteMany({ where: { usuarioId } });
+      await this.convites.revogarTodos(tx, usuarioId); // RVAL-03
+      await tx.eventoConta.create({ data: { usuarioId, porId: null, tipo: "senha_trocada", descricao: "Senha trocada pela própria pessoa." } });
+    });
+  }
+
+  /** Confere a senha atual sem trocar nada (para gerar códigos de recuperação). */
+  async conferirSenha(usuarioId: number, senha: string) {
+    const chave = `conferir:${usuarioId}`;
+    if (!(await this.limites.consumir(chave, LOGIN_MAX_POR_IP, LOGIN_JANELA_MS))) {
+      throw muitasTentativas("Muitas tentativas. Aguarde alguns minutos.");
+    }
+    const u = await this.prisma.usuario.findUniqueOrThrow({ where: { id: usuarioId } });
+    if (!u.senhaHash || !(await bcrypt.compare(senha, u.senhaHash))) throw naoAutenticado("Senha atual incorreta.");
+    await this.limites.limpar(chave);
+  }
+
+  async anotar(usuarioId: number, tipo: string, descricao: string) {
+    await this.prisma.eventoConta.create({ data: { usuarioId, porId: null, tipo, descricao } });
+  }
+
+  /**
+   * "Esqueci minha senha", como no gestor: resposta sempre igual, exista a conta ou não (não vira
+   * oráculo de quem tem conta). Se a conta existe e está ativa, emite um link de troca e manda
+   * por e-mail. Sem SMTP, o link não sai de lugar nenhum (nunca vai para o log).
+   */
+  async esqueci(email: string, ip: string) {
+    if (!(await this.limites.consumir(`esqueci:ip:${agruparIp(ip)}`, LOGIN_MAX_POR_IP, LOGIN_JANELA_MS))) {
+      throw muitasTentativas("Muitas tentativas. Aguarde alguns minutos.");
+    }
+    const normal = email.trim().toLowerCase();
+    // Teto por conta: 3 por hora, em silêncio (não protege a caixa de entrada de quem é alvo se responder diferente).
+    if (!(await this.limites.consumir(`esqueci:email:${normal}`, 3, 60 * 60 * 1000))) return;
+    // RVAL-08: a resposta não espera a busca nem o envio (conta que existe levava mais tempo que a
+    // que não existe). O trabalho roda depois, e uma falha dele só vai para o log.
+    void this.processarEsqueci(normal).catch((e) => this.log.warn(`esqueci falhou: ${e instanceof Error ? e.name : "erro"}`));
+  }
+
+  private async processarEsqueci(normal: string) {
+    const u = await this.prisma.usuario.findUnique({ where: { email: normal } });
+    if (!u || !u.ativo) return;
+    // RVAL-07: não revoga o link que o administrador possa ter acabado de gerar.
+    const { token } = await this.convites.emitir(u.id, undefined, false);
+    await this.anotar(u.id, "link_esqueci", "Foi pedido um link de nova senha pela página \"Esqueci minha senha\".");
+    const link = `${config().appUrl}/organizador/${token}`;
+    const nova = !!u.senhaHash;
+    await this.mail.enviar(u.email, nova ? "Bolão da Mega: definir nova senha" : "Bolão da Mega: ativar sua conta", {
+      titulo: nova ? "Defina uma nova senha" : "Ative a sua conta",
+      paragrafos: [
+        `Olá, ${u.nome || "organizador"}. Alguém (esperamos que você) pediu para ${nova ? "redefinir a senha" : "ativar a conta"} do Bolão da Mega. Use o botão abaixo para continuar.`,
+      ],
+      acao: { texto: nova ? "Escolher nova senha" : "Ativar minha conta", url: link, mostrarUrl: true },
+      rodape: ["O link vale 7 dias e só pode ser usado uma vez.", "Se não foi você, ignore este e-mail: sua senha continua a mesma."],
+    });
   }
 }

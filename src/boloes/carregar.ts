@@ -1,6 +1,7 @@
 import type { Bolao, Jogo, Participante } from "@prisma/client";
-import { naoEncontrado } from "../common/erros";
+import { conflito, naoEncontrado } from "../common/erros";
 import type { Tx } from "../prisma/prisma.service";
+import { precoJogo } from "../shared/regras";
 import type { BolaoAdminDTO, BolaoDTO } from "../shared/tipos";
 import { montarResumo, type Resumo } from "./resumo";
 
@@ -23,6 +24,18 @@ export function premiosDe(b: Bolao) {
     : null;
 }
 
+/** O sorteio já começou (ou passou)? Sem data, só o resultado trava. */
+export const sorteioPassou = (b: Bolao, agora = Date.now()) => !!b.dataSorteio && b.dataSorteio.getTime() <= agora;
+
+/** Depois do sorteio ou com resultado: mudanças que mexem no rateio exigem confirmação (SEC-04). */
+export const bolaoTravado = (b: Bolao) => b.resultadoDezenas.length === 6 || sorteioPassou(b);
+
+/**
+ * Aceita inscrição e jogo novo? Nunca depois do sorteio nem com resultado (SEC-01), e nunca sem
+ * data de sorteio: sem ela nada travaria depois do sorteio real (BAUD-03).
+ */
+export const aceitaApostas = (b: Bolao) => b.inscricoesAbertas && !!b.dataSorteio && !bolaoTravado(b);
+
 export function bolaoDTO(b: Bolao): BolaoDTO {
   const premios = premiosDe(b);
   return {
@@ -34,7 +47,8 @@ export function bolaoDTO(b: Bolao): BolaoDTO {
     precoSimples: b.precoSimples,
     maxDezenasParticipante: b.maxDezenasParticipante,
     maxParticipantes: b.maxParticipantes,
-    inscricoesAbertas: b.inscricoesAbertas,
+    inscricoesAbertas: aceitaApostas(b),
+    travado: bolaoTravado(b),
     instrucoes: b.instrucoes,
     estimativaPremio: num(b.estimativaPremio),
     resultado: premios
@@ -78,4 +92,29 @@ export async function registrarEvento(
   dados?: Record<string, unknown>,
 ) {
   await tx.evento.create({ data: { bolaoId, tipo, descricao, dados: dados as object | undefined } });
+}
+
+/** Teto do que um participante pode dever (e do que se confirma como recebido): R$ 1.000.000,00. */
+export const TETO_DEVIDO = 100_000_000;
+
+/** Soma o preço dos jogos do participante mais os novos; recusa se passar do teto (BAUD-08). */
+export async function exigirDentroDoTeto(tx: Tx, participanteId: number, precoSimples: number, novos: number[][]) {
+  const atuais = await tx.jogo.findMany({ where: { participanteId }, select: { dezenas: true } });
+  const total = [...atuais.map((j) => j.dezenas), ...novos].reduce((s, d) => s + precoJogo(d.length, precoSimples), 0);
+  if (total > TETO_DEVIDO) throw conflito("limite_valor", "O valor dos jogos desta pessoa passaria de R$ 1.000.000,00. Divida em mais de uma pessoa ou fale com o administrador.");
+}
+
+/**
+ * Com o bolão travado, operações que mudam o rateio só passam com `?confirmar=1` (SEC-04).
+ * O front pergunta ao organizador e repete a chamada com a confirmação.
+ */
+export function exigirConfirmacao(b: Bolao, confirmado: boolean) {
+  if (bolaoTravado(b) && !confirmado) {
+    throw conflito(
+      "bolao_travado",
+      b.resultadoDezenas.length === 6
+        ? "O resultado já foi lançado. Esta mudança altera o rateio; confirme para continuar."
+        : "O horário do sorteio já passou. Esta mudança altera o rateio; confirme para continuar.",
+    );
+  }
 }
