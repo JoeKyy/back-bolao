@@ -208,14 +208,14 @@ export class AuthService implements OnModuleInit {
     const { token } = await this.convites.emitir(u.id, undefined, false);
     await this.anotar(u.id, "link_esqueci", "Foi pedido um link de nova senha pela página \"Esqueci minha senha\".");
     const link = `${config().appUrl}/organizador/${token}`;
-    await this.mail.enviar(
-      u.email,
-      "Bolão da Mega: definir nova senha",
-      [
-        `Olá, ${u.nome || "organizador"}. Alguém (esperamos que você) pediu para ${u.senhaHash ? "redefinir a senha" : "ativar a conta"} do Bolão da Mega.`,
-        "O link vale 7 dias e só pode ser usado uma vez. Se não foi você, ignore este e-mail: sua senha continua a mesma.",
+    const nova = !!u.senhaHash;
+    await this.mail.enviar(u.email, nova ? "Bolão da Mega: definir nova senha" : "Bolão da Mega: ativar sua conta", {
+      titulo: nova ? "Defina uma nova senha" : "Ative a sua conta",
+      paragrafos: [
+        `Olá, ${u.nome || "organizador"}. Alguém (esperamos que você) pediu para ${nova ? "redefinir a senha" : "ativar a conta"} do Bolão da Mega. Use o botão abaixo para continuar.`,
       ],
-      { texto: "Escolher nova senha", url: link },
-    );
+      acao: { texto: nova ? "Escolher nova senha" : "Ativar minha conta", url: link, mostrarUrl: true },
+      rodape: ["O link vale 7 dias e só pode ser usado uma vez.", "Se não foi você, ignore este e-mail: sua senha continua a mesma."],
+    });
   }
 }
