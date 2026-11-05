@@ -63,6 +63,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       CAIXA_API_URL: ${CAIXA_API_URL:-https://servicebus2.caixa.gov.br/portaldeloterias/api/megasena}
       SMTP_URL: ${SMTP_URL:-}
+      MAIL_HELO: ${MAIL_HELO:-}
+      SMTP_TLS_SERVERNAME: ${SMTP_TLS_SERVERNAME:-}
       MAIL_FROM: ${MAIL_FROM:-Bolão da Mega <nao-responda@joekyy.com.br>}
       APP_URL: ${APP_URL:?defina APP_URL no .env}
     depends_on:
