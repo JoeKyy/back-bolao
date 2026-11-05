@@ -12,6 +12,8 @@ export type FonteResultado = "caixa" | "manual";
 export interface ErroApi {
   codigo: string;
   mensagem: string;
+  /** Só em `entrada_invalida`: motivo fixo por campo (chave = nome do campo no corpo da requisição). */
+  campos?: Record<string, string>;
 }
 
 export interface BolaoNaLista {
