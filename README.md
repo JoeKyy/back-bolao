@@ -464,6 +464,7 @@ Passo a passo de montagem (provisionamento, chave, `.env`, sites, DNS, certifica
 
 ## 16. Documentos relacionados
 
+- [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md) e [`LICENSE`](LICENSE) (MIT): contribuição, relato de vulnerabilidades e licença.
 - [`HANDOFF-SEGURANCA.md`](HANDOFF-SEGURANCA.md): padrão de segurança seguido e achados corrigidos.
 - [`deploy/README.md`](deploy/README.md): publicação e operação na VPS.
 - Front-end: [`JoeKyy/bolao-web`](https://github.com/JoeKyy/bolao-web).
@@ -472,6 +473,5 @@ Passo a passo de montagem (provisionamento, chave, `.env`, sites, DNS, certifica
 
 - **Backup automático e cópia externa** do Postgres (cron do usuário `deploy` e destino fora da VPS).
 - **Retenção de dados**: a tela de inscrição promete apagar os dados quando o bolão acabar, mas a rotina de limpeza ainda não existe.
-- **Proteção de branch e revisores obrigatórios**: dependem do plano Pro do GitHub em repositório privado.
 - **DMARC** do domínio de e-mail ainda não publicado (recomendado `p=none` para começar).
 - **Memória e serviços da VPS**: há serviços sem uso (MySQL, FTP) escutando em todas as interfaces; vale desligar ou restringir.
