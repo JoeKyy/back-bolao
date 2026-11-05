@@ -2,8 +2,8 @@ import { Injectable, Logger } from "@nestjs/common";
 import { isIPv4 } from "node:net";
 import nodemailer, { type Transporter } from "nodemailer";
 import { config } from "../common/config";
+import { montarEmail, type Conteudo } from "./layout";
 
-const escapar = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /**
  * Endereços cujo tráfego NÃO SAI desta máquina: os únicos em que a verificação do certificado do
@@ -62,17 +62,14 @@ export class MailService {
     return !!config().smtpUrl;
   }
 
-  async enviar(para: string, assunto: string, paragrafos: string[], acao: { texto: string; url: string }): Promise<boolean> {
+  async enviar(para: string, assunto: string, conteudo: Conteudo): Promise<boolean> {
     const t = this.obter();
     const mascarado = para.replace(/^(.).*(@.*)$/, "$1***$2");
     if (!t) {
       this.log.warn(`SMTP não configurado; e-mail para ${mascarado} não enviado.`);
       return false;
     }
-    const texto = [...paragrafos, "", `${acao.texto}: ${acao.url}`].join("\n");
-    const html =
-      paragrafos.map((p) => `<p>${escapar(p)}</p>`).join("") +
-      `<p><a href="${escapar(acao.url)}">${escapar(acao.texto)}</a></p><p style="color:#666;font-size:12px">${escapar(acao.url)}</p>`;
+    const { html, texto } = montarEmail(conteudo);
     try {
       await t.sendMail({ from: config().mailFrom, to: para, subject: assunto, text: texto, html });
       return true;
