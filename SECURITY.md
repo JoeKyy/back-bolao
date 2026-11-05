@@ -12,4 +12,4 @@ Os dois repositórios (`back-bolao` e `bolao-web`) e os ambientes publicados. Fo
 
 ## Boas práticas já adotadas
 
-Sessão opaca em cookie `__Host-`, proteção CSRF, CORS restrito, limites de tentativas no banco, senha de login cifrada no navegador, erros que não repetem a entrada e banco com papel de aplicação sem DDL. Detalhes no README e em `HANDOFF-SEGURANCA.md`.
+Sessão opaca em cookie `__Host-`, proteção CSRF, CORS restrito, limites de tentativas no banco, senha de login cifrada no navegador, erros que não repetem a entrada e banco com papel de aplicação sem DDL. Detalhes na seção de segurança do README.

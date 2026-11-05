@@ -87,7 +87,6 @@ Pontos de desenho que valem saber antes de mexer:
 ```
 back-bolao/
 ├── README.md                     Este arquivo
-├── HANDOFF-SEGURANCA.md          Padrão de segurança do projeto e achados de auditoria
 ├── Dockerfile                    Imagem da API (multi-stage); o CMD migra e depois sobe a API
 ├── docker-compose.yml            Postgres 16 + API (limites de memória, healthcheck, host network)
 ├── package.json / pnpm-*.yaml    Dependências e scripts
@@ -312,7 +311,7 @@ Todas as escritas exigem o cabeçalho `X-Bolao: 1` e `Origin` permitido. Os erro
 
 ## 8. Segurança
 
-O padrão seguido está em [`HANDOFF-SEGURANCA.md`](HANDOFF-SEGURANCA.md). Em resumo, por camada:
+O modelo de segurança segue o padrão descrito abaixo. Em resumo, por camada:
 
 - **Sessão**: token opaco de 32 bytes em cookie `HttpOnly`, `Secure`, `SameSite`, com prefixo `__Host-` em produção; só o sha256 vai ao banco; expira em 7 dias no total e 48 h de inatividade.
 - **CSRF**: toda escrita exige `X-Bolao: 1` **e** `Origin` na lista de `CORS_ORIGINS`.
@@ -465,7 +464,6 @@ Passo a passo de montagem (provisionamento, chave, `.env`, sites, DNS, certifica
 ## 16. Documentos relacionados
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md), [`SECURITY.md`](SECURITY.md) e [`LICENSE`](LICENSE) (MIT): contribuição, relato de vulnerabilidades e licença.
-- [`HANDOFF-SEGURANCA.md`](HANDOFF-SEGURANCA.md): padrão de segurança seguido e achados corrigidos.
 - [`deploy/README.md`](deploy/README.md): publicação e operação na VPS.
 - Front-end: [`JoeKyy/bolao-web`](https://github.com/JoeKyy/bolao-web).
 
