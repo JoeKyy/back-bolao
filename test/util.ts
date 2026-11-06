@@ -34,7 +34,7 @@ export function login(email: string, senha: string) {
 export async function limpar(prisma: PrismaService) {
   if (!/\/bolao_teste[a-z_]*(\?|$)/.test(process.env.DATABASE_URL ?? "")) throw new Error("limpar() só no banco de teste");
   await prisma.$executeRawUnsafe(
-    `TRUNCATE "Evento","Jogo","DispositivoAcesso","Participante","Bolao","Sessao","Tentativa","AparelhoOrganizador","ConviteOrganizador","CodigoRecuperacao","EventoConta" RESTART IDENTITY CASCADE`,
+    `TRUNCATE "Evento","Jogo","DispositivoAcesso","Participante","Bolao","Sessao","Tentativa","AparelhoOrganizador","ConviteOrganizador","CodigoRecuperacao","EventoConta","VinculoConta","AcessoParticipante" RESTART IDENTITY CASCADE`,
   );
   await prisma.$executeRawUnsafe(`DELETE FROM "Usuario" WHERE "email" <> 'admin@teste.local'`);
   await prisma.$executeRawUnsafe(`UPDATE "Usuario" SET "admin" = true, "tesoureiro" = true, "ativo" = true WHERE "email" = 'admin@teste.local'`);

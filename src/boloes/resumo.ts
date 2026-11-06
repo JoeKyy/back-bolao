@@ -33,6 +33,7 @@ export interface ParticipanteBase {
   whatsapp: string;
   valorPago: number;
   criadoEm: Date;
+  usuarioId?: number | null;
 }
 
 export interface JogoBase {
@@ -103,6 +104,7 @@ export function montarResumo(b: BolaoBase, parts: ParticipanteBase[], jogosBase:
       situacao: situacaoDe(devido, p.valorPago),
       parte: rateio ? rateio.get(p.id) ?? 0 : null,
       criadoEm: p.criadoEm.toISOString(),
+      temConta: p.usuarioId != null,
     };
   });
 
