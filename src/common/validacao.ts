@@ -37,7 +37,10 @@ function coletar(erros: ValidationError[], prefixo: string, saida: Record<string
       else {
         // Campo ausente falha em várias regras ao mesmo tempo: "obrigatório" vem primeiro.
         const [tipo, msg] = regras.find(([k]) => k === "isDefined" || k === "isNotEmpty" || k === "isString") ?? regras[0];
-        saida[caminho] = (MOTIVOS[tipo] ?? (() => "Valor inválido."))(msg);
+        saida[caminho] =
+          tipo === "matches" && e.property === "whatsapp"
+            ? "Informe o WhatsApp com DDD, como (11) 91234-5678."
+            : (MOTIVOS[tipo] ?? (() => "Valor inválido."))(msg);
       }
     }
     if (e.children?.length) coletar(e.children, caminho, saida);

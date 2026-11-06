@@ -5,6 +5,7 @@ import type { Request, Response } from "express";
 import { AdminGuard, lerCookie, type RequestComAdmin } from "../auth/auth.guard";
 import { ipDe } from "../auth/auth.controller";
 import { AuthService } from "../auth/auth.service";
+import { WHATSAPP_RE } from "../common/contato";
 import { COOKIE_DISPOSITIVO, COOKIE_SESSAO, opcoesCookie } from "../common/cookies";
 import { IdPipe } from "../common/id.pipe";
 import { PublicoService, type Identidade } from "./publico.service";
@@ -19,7 +20,7 @@ class InscricaoDto {
   @IsOptional() @Transform(aparar) @IsString() @MinLength(2) @MaxLength(60) @Matches(/^[^\u0000-\u001F\u007F]*$/)
   nome?: string;
 
-  @IsOptional() @Transform(aparar) @IsString() @MaxLength(30) @Matches(/^[0-9()+\-\s]*$/)
+  @IsOptional() @Transform(aparar) @IsString() @MaxLength(30) @Matches(WHATSAPP_RE)
   whatsapp?: string;
 }
 
