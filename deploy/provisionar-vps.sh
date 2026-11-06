@@ -38,12 +38,15 @@ install -m 0755 -o root -g root "$AQUI/bolao-deploy" /usr/local/sbin/bolao-deplo
 install -m 0755 -o root -g root "$AQUI/bolao-backup" /usr/local/sbin/bolao-backup
 install -m 0644 -o root -g root "$AQUI/bolao-backup.cron" /etc/cron.d/bolao-backup
 
+install -d -m 755 -o root -g root /srv/backups
+install -d -m 750 -o deploy -g deploy /srv/backups/bolao
+
 echo "== 4. Pastas por ambiente (cada uma com seu .env, fora do git)"
 for amb in producao homolog; do
   for svc in back web; do
     install -d -m 750 -o deploy -g deploy "/srv/bolao/$amb/$svc"
   done
-  install -d -m 750 -o deploy -g deploy "/srv/bolao/$amb/back/backups"
+  install -d -m 750 -o deploy -g deploy "/srv/backups/bolao/$amb"
   # initdb precisa ser legível pelo usuário do Postgres dentro do container (não é o dono); sem segredos.
   install -d -m 755 -o deploy -g deploy "/srv/bolao/$amb/back/initdb"
   install -m 0755 -o deploy -g deploy "$AQUI/initdb/01-papel-app.sh" "/srv/bolao/$amb/back/initdb/01-papel-app.sh" 2>/dev/null || true

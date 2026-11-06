@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- ~/Library/LaunchAgents/br.com.joekyy.bolao-backup.plist
+     Roda todo dia às 05:30 (a VPS faz o backup às 04:15). Se o Mac estiver dormindo nessa hora,
+     o launchd executa ao acordar. Troque __HOME__ pelo caminho da sua pasta pessoal. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>br.com.joekyy.bolao-backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/bin/bolao-backup-pull.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>30</integer></dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/bolao-backup.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/bolao-backup.log</string>
+</dict>
+</plist>

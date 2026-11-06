@@ -1,9 +1,9 @@
 # /etc/cron.d/bolao-backup  (instalado por provisionar-vps.sh)
 # Backup diário do Postgres de cada ambiente e verificação semanal por restauração num banco temporário.
-# Roda como `deploy` (grupo docker). Saída em /srv/bolao/<ambiente>/back/backups/backup.log.
+# Roda como `deploy` (grupo docker). Saída em /srv/backups/bolao/<ambiente>/backup.log.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-15 4 * * * deploy /usr/local/sbin/bolao-backup fazer producao >> /srv/bolao/producao/back/backups/backup.log 2>&1
-25 4 * * * deploy /usr/local/sbin/bolao-backup fazer homolog >> /srv/bolao/homolog/back/backups/backup.log 2>&1
-45 4 * * 0 deploy /usr/local/sbin/bolao-backup verificar producao >> /srv/bolao/producao/back/backups/backup.log 2>&1
-55 4 * * 0 deploy /usr/local/sbin/bolao-backup verificar homolog >> /srv/bolao/homolog/back/backups/backup.log 2>&1
+15 4 * * * deploy /usr/local/sbin/bolao-backup fazer producao >> /srv/backups/bolao/producao/backup.log 2>&1
+25 4 * * * deploy /usr/local/sbin/bolao-backup fazer homolog >> /srv/backups/bolao/homolog/backup.log 2>&1
+45 4 * * 0 deploy /usr/local/sbin/bolao-backup verificar producao >> /srv/backups/bolao/producao/backup.log 2>&1
+55 4 * * 0 deploy /usr/local/sbin/bolao-backup verificar homolog >> /srv/backups/bolao/homolog/backup.log 2>&1

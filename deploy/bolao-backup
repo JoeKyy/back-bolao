@@ -6,11 +6,12 @@
 #   bolao-backup fazer <producao|homolog>       dump diário atômico, guarda 30 dias
 #   bolao-backup verificar <producao|homolog>   restaura o dump mais recente num banco TEMPORÁRIO,
 #                                                confere as tabelas e apaga o temporário
-# Os dumps ficam em /srv/bolao/<ambiente>/back/backups (modo 700, fora do htdocs).
+# Os dumps ficam em /srv/backups/bolao/<ambiente> (modo 750, dono deploy, fora do htdocs).
 # Sinais para monitorar: backups/ultimo-ok (data do último backup bom) e backups/ULTIMA-FALHA.
 set -euo pipefail
 
 BASE=/srv/bolao
+BACKUPS=/srv/backups/bolao   # fora de /srv/bolao: o acesso de leitura da cópia externa só enxerga esta pasta (nunca os .env)
 RETENCAO_DIAS=30
 MIN_LIVRE_GB=2
 IDADE_MAX_HORAS=36   # "verificar" recusa dump mais velho que isto
@@ -21,7 +22,7 @@ case "$ACAO" in fazer|verificar) ;; *) echo "uso: bolao-backup <fazer|verificar>
 case "$AMB" in producao|homolog) ;; *) echo "ambiente inválido" >&2; exit 2 ;; esac
 
 DIR="$BASE/$AMB/back"
-DESTINO="$DIR/backups"
+DESTINO="$BACKUPS/$AMB"
 cd "$DIR"
 registro() { printf '%s %s [%s] %s\n' "$(date '+%F %T')" "$AMB" "$ACAO" "$*"; }
 falha() {
