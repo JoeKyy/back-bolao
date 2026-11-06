@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { Transform } from "class-transformer";
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsInt, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEmail, IsInt, IsOptional, IsString, Matches, MaxLength, MinLength } from "class-validator";
 import type { Request, Response } from "express";
 import { AdminGuard, lerCookie, type RequestComAdmin } from "../auth/auth.guard";
 import { ipDe } from "../auth/auth.controller";
@@ -8,6 +8,7 @@ import { AuthService } from "../auth/auth.service";
 import { COOKIE_DISPOSITIVO, COOKIE_SESSAO, opcoesCookie } from "../common/cookies";
 import { IdPipe } from "../common/id.pipe";
 import { PublicoService, type Identidade } from "./publico.service";
+import { VinculoService } from "./vinculo.service";
 
 const SEIS_MESES_MS = 180 * 24 * 60 * 60 * 1000;
 const aparar = ({ value }: { value: unknown }) => (typeof value === "string" ? value.trim() : value);
@@ -19,6 +20,21 @@ class InscricaoDto {
 
   @IsOptional() @Transform(aparar) @IsString() @MaxLength(30) @Matches(/^[0-9()+\-\s]*$/)
   whatsapp?: string;
+}
+
+class ContaDto {
+  @Transform(aparar) @IsEmail() @MaxLength(120)
+  email!: string;
+}
+
+class ConfirmarVinculoDto {
+  /** Só vale em conta nova; sem ele, vale o nome do participante. */
+  @IsOptional() @Transform(aparar) @IsString() @MinLength(2) @MaxLength(60) @Matches(/^[^\u0000-\u001F\u007F]*$/)
+  nome?: string;
+
+  /** Só exigida quando ainda não há conta com senha; o tamanho e o conteúdo saem de exigirSenhaAceitavel. */
+  @IsOptional() @IsString() @MaxLength(200)
+  senha?: string;
 }
 
 class JogoParticipanteDto {
@@ -35,6 +51,7 @@ export class PublicoController {
   constructor(
     private readonly publico: PublicoService,
     private readonly auth: AuthService,
+    private readonly vinculo: VinculoService,
   ) {}
 
   private async quem(req: Request): Promise<Identidade> {
@@ -67,6 +84,17 @@ export class PublicoController {
     await this.publico.vincular(convite, await this.quem(req));
   }
 
+  /**
+   * Pede o link para guardar a participação deste aparelho numa conta (e-mail + senha própria).
+   * 202 e a mesma mensagem, exista a conta ou não; só a confirmação pelo e-mail liga o bolão.
+   */
+  @Post("conta")
+  @HttpCode(202)
+  async pedirConta(@Param("convite") convite: string, @Body() dto: ContaDto, @Req() req: Request) {
+    const p = await this.publico.participanteParaConta(convite, await this.quem(req));
+    return this.vinculo.pedir(p, dto.email, ipDe(req));
+  }
+
   @Get("painel")
   async painel(@Param("convite") convite: string, @Req() req: Request) {
     return this.publico.painel(convite, await this.quem(req));
@@ -94,5 +122,30 @@ export class ParticipacoesController {
   @Get()
   listar(@Req() req: RequestComAdmin) {
     return this.publico.participacoes(req.adminId!);
+  }
+}
+
+/** Página do link enviado por e-mail: confirma que o e-mail é da pessoa e guarda o bolão na conta. */
+@Controller("vinculo/:token")
+export class VinculoController {
+  constructor(
+    private readonly vinculo: VinculoService,
+    private readonly auth: AuthService,
+  ) {}
+
+  @Get()
+  ver(@Param("token") token: string, @Req() req: Request) {
+    return this.vinculo.ver(token, ipDe(req));
+  }
+
+  @Post()
+  @HttpCode(200)
+  async confirmar(@Param("token") token: string, @Body() dto: ConfirmarVinculoDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const r = await this.vinculo.confirmar(token, dto.nome ?? "", dto.senha, ipDe(req));
+    if (r.sessao) {
+      const { token: sessao, expiraEm } = await this.auth.abrirSessao(r.usuarioId);
+      res.cookie(COOKIE_SESSAO, sessao, opcoesCookie(expiraEm.getTime() - Date.now()));
+    }
+    return { convite: r.convite, sessao: r.sessao };
   }
 }

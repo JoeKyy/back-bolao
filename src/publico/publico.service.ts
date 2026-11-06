@@ -133,6 +133,19 @@ export class PublicoService {
     });
   }
 
+  /**
+   * Quem é o participante deste aparelho, para pedir "guardar numa conta". Sem aparelho inscrito
+   * no bolão, 401 (nada de pedir link para participação alheia). Já guardada em conta: 409.
+   */
+  async participanteParaConta(convite: string, quem: Identidade) {
+    const b = await this.bolaoDoConvite(convite);
+    const pid = await this.participanteAtual(b.id, quem);
+    if (!pid) throw naoAutenticado("Entre no bolão pelo link de convite.");
+    const p = await this.prisma.participante.findUniqueOrThrow({ where: { id: pid }, select: { id: true, nome: true, usuarioId: true } });
+    if (p.usuarioId !== null) throw conflito("ja_na_conta", "Esta participação já está guardada em uma conta.");
+    return { participanteId: p.id, nome: p.nome, bolaoNome: b.nome };
+  }
+
   /** Guarda na conta logada a participação que este aparelho tem no bolão. */
   async vincular(convite: string, quem: Identidade) {
     if (!quem.usuarioId) throw naoAutenticado("Entre na sua conta para guardar o bolão.");

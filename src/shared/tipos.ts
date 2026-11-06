@@ -233,3 +233,24 @@ export interface ConviteOrganizadorPublico {
   nome: string;
   tipo: "novo" | "troca";
 }
+
+/** Pedido de link para guardar o bolão numa conta (resposta sempre igual, exista a conta ou não). */
+export interface ContaPedida {
+  mensagem: string;
+}
+
+/** O que a página do link de confirmação mostra antes de a pessoa confirmar. */
+export interface VinculoPublico {
+  bolao: string;
+  convite: string;
+  nome: string;
+  email: string;
+  /** true: já existe conta com senha para este e-mail, então só falta ligar o bolão a ela. */
+  contaExiste: boolean;
+}
+
+/** Resultado da confirmação: se abriu sessão (conta nova) ou se a pessoa precisa entrar. */
+export interface VinculoConfirmado {
+  convite: string;
+  sessao: boolean;
+}
