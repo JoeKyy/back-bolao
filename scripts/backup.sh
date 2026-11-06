@@ -7,15 +7,12 @@
 set -euo pipefail
 
 # Carrega o .env do ambiente (COMPOSE_PROJECT_NAME, POSTGRES_USER, POSTGRES_DB).
-if [ -f .env ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . ./.env
-  set +a
-fi
+# Lê só as variáveis necessárias: o .env tem valores com espaço e < > (MAIL_FROM) que quebram o `source`.
+var() { [ -f .env ] && grep -E "^$1=" .env | head -1 | cut -d= -f2- || true; }
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(var COMPOSE_PROJECT_NAME)}"
 : "${COMPOSE_PROJECT_NAME:?defina COMPOSE_PROJECT_NAME no .env (senão o backup pode ler o banco do outro ambiente)}"
-USUARIO="${POSTGRES_USER:-bolao}"
-BANCO="${POSTGRES_DB:-bolao}"
+USUARIO="${POSTGRES_USER:-$(var POSTGRES_USER)}"; USUARIO="${USUARIO:-bolao}"
+BANCO="${POSTGRES_DB:-$(var POSTGRES_DB)}"; BANCO="${BANCO:-bolao}"
 DESTINO="${BACKUP_DIR:-./backups}"
 
 if docker compose version >/dev/null 2>&1; then COMPOSE=(docker compose); else COMPOSE=(docker-compose); fi

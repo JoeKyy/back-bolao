@@ -54,6 +54,17 @@ O "esqueci minha senha" envia pelo Postfix do próprio host, sem credencial, no 
 
 - Estado: `ssh -i ~/.ssh/bolao_deploy -p 22022 deploy@143.95.185.142 "estado homolog back"` (mostra a etiqueta no ar e a anterior).
 - Reversão manual: reenviar a imagem anterior não é preciso, ela fica no servidor (as 2 últimas). Rode o job de deploy do commit anterior, ou, como root, `API_TAG=<sha anterior> docker compose --profile servidor up -d --no-deps api` na pasta do ambiente. Migrações são só aditivas, então a versão anterior continua compatível.
-- Backup: `bash scripts/backup.sh` agendado no cron do usuário `deploy`, de dentro de `/srv/bolao/<ambiente>/back`, e cópia para fora da VPS (ainda a definir).
+- Backup: `bolao-backup` (instalado pelo `provisionar-vps.sh` junto com `/etc/cron.d/bolao-backup`): dump diário por ambiente com retenção de 30 dias e verificação semanal por restauração num banco temporário. Dumps, log e sinais em `/srv/backups/bolao/<ambiente>` (`backup.log`, `ultimo-ok`, `ULTIMA-FALHA`). Cópia para fora da VPS: puxada pelo Mac (próxima seção).
 - Memória: 2 GB com CloudPanel, MySQL e vários PHP-FPM ligados deixam ~850 MB livres. Postgres (512 MB) + API (384 MB) + web de DOIS ambientes não cabem sem desligar o que não é usado (versões de PHP, Varnish, Memcached, MySQL se ninguém usa). Medir antes de ligar a produção; ver INF-04.
 - Segurança do usuário `deploy`: estar no grupo `docker` equivale a root na máquina, por isso a chave é restrita ao comando forçado. Guarde a chave privada só como segredo do GitHub.
+
+## Cópia dos backups para o Mac (somente leitura)
+
+O Mac puxa os dumps todo dia às 05:30 (a VPS faz o backup às 04:15). Nada é empurrado de dentro da VPS e a chave não dá acesso a mais nada:
+
+- **Chave dedicada** `~/.ssh/bolao_backup` (ed25519). Na VPS ela entra em `/home/deploy/.ssh/authorized_keys` com `restrict,command="/usr/bin/rrsync -ro /srv/backups/bolao"`: só lê essa pasta, não abre shell e não enxerga os `.env`.
+- **Host** `vps_bolao_backup` no `~/.ssh/config` (porta 22022, usuário `deploy`, `known_hosts` próprio com a chave do servidor conferida).
+- **rsync do Homebrew** (`brew install rsync`): o `rsync` que vem no macOS (openrsync) é recusado pelo `rrsync` do servidor.
+- **Script** `deploy/mac/bolao-backup-pull.sh` copiado para `~/bin/`: `rsync` de `producao/` e `homolog/` para `~/Backups/bolao`, confere cada dump (`gzip -t`) e a idade do mais recente (36 h) e avisa por notificação do macOS se algo estiver errado. O Mac guarda 90 dias e nunca apaga o que a VPS apagou.
+- **Agendamento** `deploy/mac/br.com.joekyy.bolao-backup.plist` em `~/Library/LaunchAgents` (carregar com `launchctl bootstrap gui/$(id -u) ...`). Log em `~/Library/Logs/bolao-backup.log`.
+- Os dumps têm nomes, WhatsApp e hashes de senha: mantenha o disco do Mac criptografado (FileVault).

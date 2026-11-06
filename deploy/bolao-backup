@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# /usr/local/sbin/bolao-backup
+#
+# Backup e verificação do Postgres de um ambiente, chamado pelo cron (/etc/cron.d/bolao-backup)
+# como usuário `deploy` (que está no grupo docker). Uso:
+#   bolao-backup fazer <producao|homolog>       dump diário atômico, guarda 30 dias
+#   bolao-backup verificar <producao|homolog>   restaura o dump mais recente num banco TEMPORÁRIO,
+#                                                confere as tabelas e apaga o temporário
+# Os dumps ficam em /srv/backups/bolao/<ambiente> (modo 750, dono deploy, fora do htdocs).
+# Sinais para monitorar: backups/ultimo-ok (data do último backup bom) e backups/ULTIMA-FALHA.
+set -euo pipefail
+
+BASE=/srv/bolao
+BACKUPS=/srv/backups/bolao   # fora de /srv/bolao: o acesso de leitura da cópia externa só enxerga esta pasta (nunca os .env)
+RETENCAO_DIAS=30
+MIN_LIVRE_GB=2
+IDADE_MAX_HORAS=36   # "verificar" recusa dump mais velho que isto
+
+ACAO="${1:-}"
+AMB="${2:-}"
+case "$ACAO" in fazer|verificar) ;; *) echo "uso: bolao-backup <fazer|verificar> <producao|homolog>" >&2; exit 2 ;; esac
+case "$AMB" in producao|homolog) ;; *) echo "ambiente inválido" >&2; exit 2 ;; esac
+
+DIR="$BASE/$AMB/back"
+DESTINO="$BACKUPS/$AMB"
+cd "$DIR"
+registro() { printf '%s %s [%s] %s\n' "$(date '+%F %T')" "$AMB" "$ACAO" "$*"; }
+falha() {
+  registro "FALHA: $*" >&2
+  registro "FALHA: $*" > "$DESTINO/ULTIMA-FALHA"
+  exit 1
+}
+
+# Um por vez (backup e verificação não se sobrepõem) e log que não cresce sem fim.
+exec 9>"/var/lock/bolao-backup-$AMB.lock"
+flock -n 9 || { registro "outro backup em andamento; saindo"; exit 0; }
+[ -f "$DESTINO/backup.log" ] && [ "$(stat -c %s "$DESTINO/backup.log")" -gt 1048576 ] && tail -n 200 "$DESTINO/backup.log" > "$DESTINO/backup.log.tmp" && mv "$DESTINO/backup.log.tmp" "$DESTINO/backup.log"
+
+[ -f .env ] || falha ".env do ambiente não encontrado"
+# Lê só as variáveis necessárias: o .env tem valores com espaço e < > (MAIL_FROM) que quebram o `source`.
+var() { grep -E "^$1=" .env | head -1 | cut -d= -f2- || true; }
+COMPOSE_PROJECT_NAME="$(var COMPOSE_PROJECT_NAME)"
+[ -n "$COMPOSE_PROJECT_NAME" ] || falha "COMPOSE_PROJECT_NAME ausente no .env"
+USUARIO="$(var POSTGRES_USER)"; USUARIO="${USUARIO:-bolao}"
+BANCO="$(var POSTGRES_DB)"; BANCO="${BANCO:-bolao}"
+PSQL=(docker compose -p "$COMPOSE_PROJECT_NAME" exec -T postgres psql -U "$USUARIO" -v ON_ERROR_STOP=1 -q)
+
+umask 077
+mkdir -p "$DESTINO"
+
+if [ "$ACAO" = fazer ]; then
+  LIVRE=$(df -BG --output=avail "$DESTINO" | tail -1 | tr -dc '0-9')
+  [ "${LIVRE:-0}" -ge "$MIN_LIVRE_GB" ] || falha "pouco disco livre (${LIVRE}G); backup não feito"
+  ARQ="$DESTINO/bolao-$(date +%Y%m%d-%H%M%S).sql.gz"
+  TMP="$ARQ.parcial"
+  trap 'rm -f "$TMP"' EXIT
+  docker compose -p "$COMPOSE_PROJECT_NAME" exec -T postgres pg_dump -U "$USUARIO" -d "$BANCO" --no-owner | gzip > "$TMP" || falha "pg_dump falhou"
+  # Dump cortado no meio também falha: o pg_dump termina sempre com esta linha.
+  gzip -dc "$TMP" | tail -n 5 | grep -q "PostgreSQL database dump complete" || falha "dump incompleto, descartado"
+  mv "$TMP" "$ARQ"
+  trap - EXIT
+  find "$DESTINO" -name 'bolao-*.sql.gz' -mtime +"$RETENCAO_DIAS" -delete
+  date -Iseconds > "$DESTINO/ultimo-ok"
+  rm -f "$DESTINO/ULTIMA-FALHA"
+  registro "ok $(basename "$ARQ") ($(du -h "$ARQ" | cut -f1)); guardados: $(find "$DESTINO" -name 'bolao-*.sql.gz' | wc -l)"
+  exit 0
+fi
+
+# verificar: restaura o dump mais recente num banco temporário e confere o conteúdo.
+ULTIMO=$(find "$DESTINO" -name 'bolao-*.sql.gz' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+[ -n "$ULTIMO" ] || falha "nenhum backup encontrado para verificar"
+IDADE_H=$(( ( $(date +%s) - $(stat -c %Y "$ULTIMO") ) / 3600 ))
+[ "$IDADE_H" -le "$IDADE_MAX_HORAS" ] || falha "o backup mais recente tem ${IDADE_H}h (limite ${IDADE_MAX_HORAS}h): o agendamento parou?"
+TEMP="verificacao_$(date +%s)"
+limpar() { "${PSQL[@]}" -d postgres -c "DROP DATABASE IF EXISTS \"$TEMP\"" >/dev/null 2>&1 || true; }
+trap limpar EXIT
+"${PSQL[@]}" -d postgres -c "CREATE DATABASE \"$TEMP\"" >/dev/null || falha "não consegui criar o banco temporário"
+gzip -dc "$ULTIMO" | "${PSQL[@]}" -d "$TEMP" >/dev/null || falha "a restauração de $(basename "$ULTIMO") deu erro"
+conta() { "${PSQL[@]}" -d "$TEMP" -tA -c "$1" | tr -d '[:space:]'; }
+TABELAS=$(conta "select count(*) from information_schema.tables where table_schema='public'")
+USUARIOS=$(conta 'select count(*) from "Usuario"')
+BOLOES=$(conta 'select count(*) from "Bolao"')
+MIGRACOES=$(conta 'select count(*) from "_prisma_migrations"')
+[ "${TABELAS:-0}" -ge 10 ] || falha "restauração com tabelas de menos (${TABELAS})"
+[ "${USUARIOS:-0}" -ge 1 ] || falha "restauração sem nenhum usuário (o administrador deveria existir)"
+rm -f "$DESTINO/ULTIMA-FALHA"
+registro "restauração ok de $(basename "$ULTIMO"): ${TABELAS} tabelas, ${MIGRACOES} migrações, ${USUARIOS} usuários, ${BOLOES} bolões"
