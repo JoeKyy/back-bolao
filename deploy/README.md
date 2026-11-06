@@ -64,6 +64,7 @@ O Mac puxa os dumps todo dia às 05:30 (a VPS faz o backup às 04:15). Nada é e
 
 - **Chave dedicada** `~/.ssh/bolao_backup` (ed25519). Na VPS ela entra em `/home/deploy/.ssh/authorized_keys` com `restrict,command="/usr/bin/rrsync -ro /srv/backups/bolao"`: só lê essa pasta, não abre shell e não enxerga os `.env`.
 - **Host** `vps_bolao_backup` no `~/.ssh/config` (porta 22022, usuário `deploy`, `known_hosts` próprio com a chave do servidor conferida).
+- **rsync do Homebrew** (`brew install rsync`): o `rsync` que vem no macOS (openrsync) é recusado pelo `rrsync` do servidor.
 - **Script** `deploy/mac/bolao-backup-pull.sh` copiado para `~/bin/`: `rsync` de `producao/` e `homolog/` para `~/Backups/bolao`, confere cada dump (`gzip -t`) e a idade do mais recente (36 h) e avisa por notificação do macOS se algo estiver errado. O Mac guarda 90 dias e nunca apaga o que a VPS apagou.
 - **Agendamento** `deploy/mac/br.com.joekyy.bolao-backup.plist` em `~/Library/LaunchAgents` (carregar com `launchctl bootstrap gui/$(id -u) ...`). Log em `~/Library/Logs/bolao-backup.log`.
 - Os dumps têm nomes, WhatsApp e hashes de senha: mantenha o disco do Mac criptografado (FileVault).

@@ -11,6 +11,9 @@
 set -euo pipefail
 
 HOST="${BOLAO_BACKUP_HOST:-vps_bolao_backup}"
+# O rsync do macOS (openrsync) é recusado pelo rrsync do servidor: use o do Homebrew (brew install rsync).
+RSYNC="${RSYNC:-/opt/homebrew/bin/rsync}"
+[ -x "$RSYNC" ] || { echo "rsync do Homebrew não encontrado ($RSYNC): rode brew install rsync" >&2; exit 1; }
 DEST="${BOLAO_BACKUP_DESTINO:-$HOME/Backups/bolao}"
 RETENCAO_DIAS=90
 IDADE_MAX_HORAS=36
@@ -27,7 +30,7 @@ mkdir -p "$DEST"
 for amb in producao homolog; do
   mkdir -p "$DEST/$amb"
   # -rt: recursivo e preserva a data; --partial: retoma transferência interrompida.
-  /usr/bin/rsync -rt --partial -e "ssh -o ConnectTimeout=30" "$HOST:$amb/" "$DEST/$amb/"
+  "$RSYNC" -rt --partial -e "ssh -o ConnectTimeout=30" "$HOST:$amb/" "$DEST/$amb/"
   # Todo dump precisa ser um gzip íntegro (um arquivo cortado não vale como backup).
   for f in "$DEST/$amb"/bolao-*.sql.gz; do
     [ -e "$f" ] || continue
