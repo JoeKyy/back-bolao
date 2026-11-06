@@ -1,3 +1,4 @@
+import { WHATSAPP_RE } from "../common/contato";
 import { Transform, Type } from "class-transformer";
 import {
   ArrayMaxSize,
@@ -86,7 +87,7 @@ export class ParticipanteDto {
   @Transform(aparar) @IsString() @MinLength(2) @MaxLength(60) @Matches(SEM_CONTROLE)
   nome!: string;
 
-  @IsOptional() @Transform(aparar) @IsString() @MaxLength(30) @Matches(/^[0-9()+\-\s]*$/)
+  @IsOptional() @Transform(aparar) @IsString() @MaxLength(30) @Matches(WHATSAPP_RE)
   whatsapp?: string;
 }
 

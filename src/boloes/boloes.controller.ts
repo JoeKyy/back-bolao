@@ -4,6 +4,7 @@ import { AdminGuard, TesoureiroGuard, type RequestComAdmin } from "../auth/auth.
 import { DonoDoBolaoGuard } from "./dono.guard";
 import { CaixaService } from "../caixa/caixa.service";
 import { Id } from "../common/id.pipe";
+import { AcessoService } from "../publico/acesso.service";
 import { BoloesService } from "./boloes.service";
 import {
   AtualizarBolaoDto,
@@ -29,6 +30,7 @@ export class BoloesController {
   constructor(
     private readonly boloes: BoloesService,
     private readonly caixa: CaixaService,
+    private readonly acessos: AcessoService,
   ) {}
 
   @Get("boloes")
@@ -85,6 +87,12 @@ export class BoloesController {
   @HttpCode(204)
   async removerParticipante(@Id("id") id: number, @Id("pid") pid: number, @Confirmar() c?: string) {
     await this.boloes.removerParticipante(id, pid, sim(c));
+  }
+
+  /** Link de acesso para quem entrou só pelo aparelho e o perdeu (a pessoa abre e confirma). */
+  @Post("boloes/:id/participantes/:pid/acesso")
+  acesso(@Id("id") id: number, @Id("pid") pid: number) {
+    return this.acessos.emitir(id, pid);
   }
 
   @Post("boloes/:id/participantes/:pid/pagamento")
