@@ -159,21 +159,22 @@ model Bolao {
 }
 
 model Participante {
-  id           Int                 @id @default(autoincrement())
+  id           Int                  @id @default(autoincrement())
   bolaoId      Int
-  bolao        Bolao               @relation(fields: [bolaoId], references: [id], onDelete: Cascade)
+  bolao        Bolao                @relation(fields: [bolaoId], references: [id], onDelete: Cascade)
   /// Conta da pessoa, quando ela participa logada (vê o bolão em qualquer aparelho).
   usuarioId    Int?
-  usuario      Usuario?            @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+  usuario      Usuario?             @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
   nome         String
-  whatsapp     String              @default("")
+  whatsapp     String               @default("")
   /// Quanto o organizador confirmou ter recebido (centavos).
-  valorPago    Int                 @default(0)
+  valorPago    Int                  @default(0)
   pagoEm       DateTime?
-  criadoEm     DateTime            @default(now())
+  criadoEm     DateTime             @default(now())
   jogos        Jogo[]
   dispositivos DispositivoAcesso[]
   vinculos     VinculoConta[]
+  acessos      AcessoParticipante[]
 
   @@unique([bolaoId, usuarioId])
   @@index([bolaoId])
@@ -231,6 +232,22 @@ model VinculoConta {
   participanteId Int
   participante   Participante @relation(fields: [participanteId], references: [id], onDelete: Cascade)
   email          String
+  /// Senha escolhida no pedido (bcrypt), usada só se a conta ainda não existir.
+  senhaHash      String?
+  criadoEm       DateTime     @default(now())
+  expiraEm       DateTime
+  usadoEm        DateTime?
+
+  @@index([participanteId])
+}
+
+/// Link de acesso gerado pelo organizador para quem entrou só pelo aparelho e perdeu o cookie.
+/// Uso único; abrir e confirmar liga um aparelho novo à participação. No banco só o sha256.
+model AcessoParticipante {
+  id             Int          @id @default(autoincrement())
+  tokenHash      String       @unique
+  participanteId Int
+  participante   Participante @relation(fields: [participanteId], references: [id], onDelete: Cascade)
   criadoEm       DateTime     @default(now())
   expiraEm       DateTime
   usadoEm        DateTime?

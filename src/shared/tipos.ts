@@ -92,6 +92,8 @@ export interface ParticipanteDTO {
 export interface ParticipanteAdminDTO extends ParticipanteDTO {
   whatsapp: string;
   criadoEm: string;
+  /** true: a participação já está guardada numa conta (entra com e-mail e senha, não precisa de link de acesso). */
+  temConta: boolean;
 }
 
 export interface Totais {
@@ -247,6 +249,21 @@ export interface VinculoPublico {
   email: string;
   /** true: já existe conta com senha para este e-mail, então só falta ligar o bolão a ela. */
   contaExiste: boolean;
+  /** true: a senha já foi escolhida no pedido; falta só confirmar o e-mail. */
+  senhaDefinida: boolean;
+}
+
+/** Link gerado pelo organizador para a pessoa recuperar o acesso à própria participação. */
+export interface AcessoEmitido {
+  token: string;
+  expiraEm: string;
+}
+
+/** O que a página do link de acesso mostra antes de a pessoa confirmar. */
+export interface AcessoPublico {
+  bolao: string;
+  convite: string;
+  nome: string;
 }
 
 /** Resultado da confirmação: se abriu sessão (conta nova) ou se a pessoa precisa entrar. */

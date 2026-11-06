@@ -34,7 +34,7 @@ export class VinculoService {
   ) {}
 
   /** Pede o link. Resposta sempre igual: não revela se o e-mail tem conta. */
-  async pedir(p: { participanteId: number; nome: string; bolaoNome: string }, emailBruto: string, ip: string): Promise<ContaPedida> {
+  async pedir(p: { participanteId: number; nome: string; bolaoNome: string }, emailBruto: string, ip: string, senha?: string): Promise<ContaPedida> {
     if (!(await this.limites.consumir(`vinculo:ip:${agruparIp(ip)}`, MAX_POR_IP, JANELA_IP_MS))) {
       throw muitasTentativas("Muitas tentativas. Aguarde alguns minutos.");
     }
@@ -42,19 +42,25 @@ export class VinculoService {
       throw muitasTentativas("Muitos pedidos para este bolão. Aguarde um pouco e tente de novo.");
     }
     const email = emailBruto.trim().toLowerCase();
+    // Senha escolhida já no pedido: conferida agora (a pessoa vê o motivo na hora) e guardada só como hash.
+    let senhaHash: string | null = null;
+    if (senha) {
+      exigirSenhaAceitavel(senha, { email, nome: p.nome });
+      senhaHash = await bcrypt.hash(senha, 12);
+    }
     // Teto por e-mail, em silêncio: não vira ferramenta de spam contra a caixa de entrada de alguém.
     if (await this.limites.consumir(`vinculo:email:${email}`, 3, HORA_MS)) {
-      void this.processar(p, email).catch((e) => this.log.warn(`vínculo falhou: ${e instanceof Error ? e.name : "erro"}`));
+      void this.processar(p, email, senhaHash).catch((e) => this.log.warn(`vínculo falhou: ${e instanceof Error ? e.name : "erro"}`));
     }
     return { mensagem: MENSAGEM_VINCULO };
   }
 
-  private async processar(p: { participanteId: number; nome: string; bolaoNome: string }, email: string) {
+  private async processar(p: { participanteId: number; nome: string; bolaoNome: string }, email: string, senhaHash: string | null) {
     const token = novoTokenSecreto();
     const expiraEm = new Date(Date.now() + VINCULO_HORAS * HORA_MS);
     await this.prisma.$transaction(async (tx) => {
       await tx.vinculoConta.updateMany({ where: { participanteId: p.participanteId, usadoEm: null }, data: { usadoEm: new Date() } });
-      await tx.vinculoConta.create({ data: { tokenHash: hashToken(token), participanteId: p.participanteId, email, expiraEm } });
+      await tx.vinculoConta.create({ data: { tokenHash: hashToken(token), participanteId: p.participanteId, email, senhaHash, expiraEm } });
     });
     const link = `${config().appUrl}/guardar/${token}`;
     await this.mail.enviar(email, "Bolão da Mega: guarde o seu bolão", {
@@ -89,6 +95,7 @@ export class VinculoService {
       nome: v.participante.nome,
       email: v.email,
       contaExiste: !!u && u.ativo && u.senhaHash !== null,
+      senhaDefinida: v.senhaHash !== null,
     };
   }
 
@@ -105,8 +112,12 @@ export class VinculoService {
     const nomeFinal = (nome || v.participante.nome).trim();
     let senhaHash: string | null = null;
     if (!contaPronta) {
-      exigirSenhaAceitavel(senha ?? "", { email: v.email, nome: nomeFinal });
-      senhaHash = await bcrypt.hash(senha!, 12);
+      if (v.senhaHash) {
+        senhaHash = v.senhaHash; // escolhida no pedido; só faltava provar o e-mail
+      } else {
+        exigirSenhaAceitavel(senha ?? "", { email: v.email, nome: nomeFinal });
+        senhaHash = await bcrypt.hash(senha!, 12);
+      }
     }
     const bolaoId = v.participante.bolaoId;
     const usuarioId = await this.prisma.$transaction(async (tx) => {

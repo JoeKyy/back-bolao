@@ -8,6 +8,7 @@ import { AuthService } from "../auth/auth.service";
 import { COOKIE_DISPOSITIVO, COOKIE_SESSAO, opcoesCookie } from "../common/cookies";
 import { IdPipe } from "../common/id.pipe";
 import { PublicoService, type Identidade } from "./publico.service";
+import { AcessoService } from "./acesso.service";
 import { VinculoService } from "./vinculo.service";
 
 const SEIS_MESES_MS = 180 * 24 * 60 * 60 * 1000;
@@ -25,6 +26,10 @@ class InscricaoDto {
 class ContaDto {
   @Transform(aparar) @IsEmail() @MaxLength(120)
   email!: string;
+
+  /** Opcional: se vier, a conta já nasce com esta senha quando o e-mail for confirmado. */
+  @IsOptional() @IsString() @MaxLength(200)
+  senha?: string;
 }
 
 class ConfirmarVinculoDto {
@@ -92,7 +97,7 @@ export class PublicoController {
   @HttpCode(202)
   async pedirConta(@Param("convite") convite: string, @Body() dto: ContaDto, @Req() req: Request) {
     const p = await this.publico.participanteParaConta(convite, await this.quem(req));
-    return this.vinculo.pedir(p, dto.email, ipDe(req));
+    return this.vinculo.pedir(p, dto.email, ipDe(req), dto.senha);
   }
 
   @Get("painel")
@@ -147,5 +152,24 @@ export class VinculoController {
       res.cookie(COOKIE_SESSAO, sessao, opcoesCookie(expiraEm.getTime() - Date.now()));
     }
     return { convite: r.convite, sessao: r.sessao };
+  }
+}
+
+/** Página do link de acesso do organizador: confirmar liga este aparelho à participação. */
+@Controller("acesso/:token")
+export class AcessoController {
+  constructor(private readonly acesso: AcessoService) {}
+
+  @Get()
+  ver(@Param("token") token: string, @Req() req: Request) {
+    return this.acesso.ver(token, ipDe(req));
+  }
+
+  @Post()
+  @HttpCode(200)
+  async confirmar(@Param("token") token: string, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const r = await this.acesso.confirmar(token, ipDe(req));
+    res.cookie(COOKIE_DISPOSITIVO, r.dispositivo, opcoesCookie(SEIS_MESES_MS));
+    return { convite: r.convite };
   }
 }

@@ -84,7 +84,7 @@ describe("guardar o bolão numa conta (VINC)", () => {
 
     const outro = cliente(app); // outro aparelho: só o link
     const ver = (await outro.get(`/vinculo/${token}`).expect(200)).body;
-    expect(ver).toEqual({ bolao: "Do Grupo", convite: conv, nome: "Ana Anonima", email: "ana@exemplo.com", contaExiste: false });
+    expect(ver).toEqual({ bolao: "Do Grupo", convite: conv, nome: "Ana Anonima", email: "ana@exemplo.com", contaExiste: false, senhaDefinida: false });
 
     await outro.post(`/vinculo/${token}`, { senha: "curta" }).expect(400); // não consome o token
     await outro.get(`/vinculo/${token}`).expect(200);
@@ -202,5 +202,77 @@ describe("guardar o bolão numa conta (VINC)", () => {
     // quem só tem o cookie do aparelho continua sem conta até o dono do e-mail confirmar
     expect((await prisma.participante.findFirstOrThrow({ where: { bolaoId: id } })).usuarioId).toBeNull();
     expect(await prisma.usuario.count({ where: { email: "dono@exemplo.com" } })).toBe(0);
+  });
+
+  it("pedido com senha: a conta nasce com ela e só falta confirmar o e-mail", async () => {
+    const { conv, aparelho, id } = await bolaoComAparelho("Carla Aparelho");
+    await aparelho.post(`/convites/${conv}/conta`, { email: "carla@exemplo.com", senha: "curta" }).expect(400); // recusada na hora
+    expect(await aguardarEmail(0)).toHaveLength(0);
+    expect(await prisma.vinculoConta.count()).toBe(0);
+    await aparelho.post(`/convites/${conv}/conta`, { email: "carla@exemplo.com", senha: SENHA }).expect(202);
+    const token = tokenDe((await aguardarEmail())[0]!.url);
+    const v = await prisma.vinculoConta.findFirstOrThrow();
+    expect(v.senhaHash).toMatch(/^\$2[aby]\$/); // só o hash, nunca a senha
+    const outro = cliente(app);
+    const ver = (await outro.get(`/vinculo/${token}`).expect(200)).body;
+    expect(ver).toMatchObject({ contaExiste: false, senhaDefinida: true });
+    const r = await outro.post(`/vinculo/${token}`, {}).expect(200); // sem digitar senha de novo
+    expect(r.body.sessao).toBe(true);
+    await cliente(app).post("/auth/entrar", login("carla@exemplo.com", SENHA)).expect(200);
+    const u = await prisma.usuario.findUniqueOrThrow({ where: { email: "carla@exemplo.com" } });
+    expect((await prisma.participante.findFirstOrThrow({ where: { bolaoId: id } })).usuarioId).toBe(u.id);
+  });
+
+  describe("link de acesso do organizador", () => {
+    const acessoDe = (adm: ReturnType<typeof cliente>, id: number, pid: number) => adm.post(`/boloes/${id}/participantes/${pid}/acesso`);
+
+    it("quem perdeu o cookie recupera a participação pelo link; uso único e GET não consome", async () => {
+      const { conv, aparelho, id, adm } = await bolaoComAparelho("Dora Aparelho");
+      await aparelho.post(`/convites/${conv}/jogos`, { dezenas: [1, 2, 3, 4, 5, 6] }).expect(204);
+      const pid = (await prisma.participante.findFirstOrThrow({ where: { bolaoId: id } })).id;
+      const { token, expiraEm } = (await acessoDe(adm, id, pid).expect(201)).body as { token: string; expiraEm: string };
+      expect(new Date(expiraEm).getTime()).toBeGreaterThan(Date.now() + 6 * 24 * 3600 * 1000);
+      const novo = cliente(app); // aparelho novo, sem cookie
+      await novo.get(`/convites/${conv}/painel`).expect(401);
+      expect((await novo.get(`/acesso/${token}`).expect(200)).body).toEqual({ bolao: "Do Grupo", convite: conv, nome: "Dora Aparelho" });
+      await novo.get(`/acesso/${token}`).expect(200); // pré-visualização não gasta o link
+      expect((await novo.post(`/acesso/${token}`).expect(200)).body).toEqual({ convite: conv });
+      expect((await novo.get(`/convites/${conv}/painel`).expect(200)).body.meusJogos).toHaveLength(1);
+      await cliente(app).post(`/acesso/${token}`).expect(404); // já usado
+      await cliente(app).get(`/acesso/${token}`).expect(404);
+      expect((await prisma.evento.findMany({ where: { bolaoId: id } })).map((e) => e.tipo)).toEqual(expect.arrayContaining(["acesso_emitido", "acesso_recuperado"]));
+      // o aparelho antigo continua valendo (não é uma troca, é um segundo aparelho)
+      await aparelho.get(`/convites/${conv}/painel`).expect(200);
+    });
+
+    it("novo link invalida o anterior; vencido e inventado dão 404", async () => {
+      const { id, adm } = await bolaoComAparelho("Edu Aparelho");
+      const pid = (await prisma.participante.findFirstOrThrow({ where: { bolaoId: id } })).id;
+      const t1 = (await acessoDe(adm, id, pid).expect(201)).body.token as string;
+      const t2 = (await acessoDe(adm, id, pid).expect(201)).body.token as string;
+      await cliente(app).get(`/acesso/${t1}`).expect(404);
+      await cliente(app).get(`/acesso/${t2}`).expect(200);
+      await prisma.acessoParticipante.updateMany({ data: { expiraEm: new Date(Date.now() - 1000) } });
+      await cliente(app).get(`/acesso/${t2}`).expect(404);
+      await cliente(app).get(`/acesso/${"y".repeat(43)}`).expect(404);
+    });
+
+    it("só o dono do bolão emite; participante com conta recebe 409; sem login 401", async () => {
+      const { id, conv, adm, aparelho } = await bolaoComAparelho("Fabi Aparelho");
+      const pid = (await prisma.participante.findFirstOrThrow({ where: { bolaoId: id } })).id;
+      await cliente(app).post(`/boloes/${id}/participantes/${pid}/acesso`).expect(401);
+      await aparelho.post(`/boloes/${id}/participantes/${pid}/acesso`).expect(401); // participante não emite
+      const { token } = (await adm.post("/usuarios", { email: "outra@exemplo.com", nome: "Outra", tesoureiro: true }).expect(201)).body as { token: string };
+      await cliente(app).post(`/convite-organizador/${token}`, { senha: SENHA }).expect(200);
+      const outra = cliente(app);
+      await outra.post("/auth/entrar", login("outra@exemplo.com", SENHA)).expect(200);
+      expect([403, 404]).toContain((await outra.post(`/boloes/${id}/participantes/${pid}/acesso`)).status);
+      // participação guardada numa conta: o acesso é por e-mail e senha
+      await aparelho.post(`/convites/${conv}/conta`, { email: "fabi@exemplo.com", senha: SENHA }).expect(202);
+      const t = tokenDe((await aguardarEmail())[0]!.url);
+      await cliente(app).post(`/vinculo/${t}`, {}).expect(200);
+      await adm.post(`/boloes/${id}/participantes/${pid}/acesso`).expect(409);
+      expect((await adm.get(`/boloes/${id}`)).body.participantes[0].temConta).toBe(true);
+    });
   });
 });

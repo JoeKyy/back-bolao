@@ -14,7 +14,8 @@ import { ConvitesService } from "./usuarios/convites.service";
 import { CodigosService } from "./auth/codigos.service";
 import { LoginCriptoService } from "./auth/login-cripto.service";
 import { MailService } from "./mail/mail.service";
-import { ParticipacoesController, PublicoController, VinculoController } from "./publico/publico.controller";
+import { AcessoController, ParticipacoesController, PublicoController, VinculoController } from "./publico/publico.controller";
+import { AcessoService } from "./publico/acesso.service";
 import { VinculoService } from "./publico/vinculo.service";
 import { PublicoService } from "./publico/publico.service";
 import contrato from "./shared/contrato.json";
@@ -57,6 +58,7 @@ class Varredura implements OnModuleInit, OnModuleDestroy {
       await this.limites.varrer();
       await this.prisma.sessao.deleteMany({ where: { expiraEm: { lt: new Date() } } });
       await this.prisma.vinculoConta.deleteMany({ where: { expiraEm: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } } });
+      await this.prisma.acessoParticipante.deleteMany({ where: { expiraEm: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } } });
     } catch (e) {
       this.log.warn(`Falha na varredura: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -65,7 +67,7 @@ class Varredura implements OnModuleInit, OnModuleDestroy {
 
 @Module({
   imports: [PrismaModule, LimitesModule],
-  controllers: [SaudeController, AuthController, BoloesController, PublicoController, VinculoController, ParticipacoesController, UsuariosController, ConviteOrganizadorController],
-  providers: [AuthService, LoginCriptoService, CodigosService, ConvitesService, MailService, AdminGuard, PerfilAdminGuard, TesoureiroGuard, DonoDoBolaoGuard, UsuariosService, BoloesService, CaixaService, PublicoService, VinculoService, Varredura],
+  controllers: [SaudeController, AuthController, BoloesController, PublicoController, VinculoController, AcessoController, ParticipacoesController, UsuariosController, ConviteOrganizadorController],
+  providers: [AuthService, LoginCriptoService, CodigosService, ConvitesService, MailService, AdminGuard, PerfilAdminGuard, TesoureiroGuard, DonoDoBolaoGuard, UsuariosService, BoloesService, CaixaService, PublicoService, VinculoService, AcessoService, Varredura],
 })
 export class AppModule {}
