@@ -169,7 +169,7 @@ back-bolao/
 │   └── util.ts, env.ts, global-setup.ts, jest-e2e.json
 │
 ├── scripts/
-│   ├── backup.sh                 Backup atômico do Postgres com teste de restauração
+│   ├── backup.sh                 Backup atômico do Postgres para uso manual/local
 │   └── gerar-contrato.mjs        Gera e confere o contrato.json
 │
 ├── deploy/                       Tudo que roda na VPS
@@ -456,7 +456,7 @@ Passo a passo de montagem (provisionamento, chave, `.env`, sites, DNS, certifica
 - **Logs**: `docker logs bolao-<prod|homolog>-back-api-1`. Os logs não contêm links, senhas nem credenciais.
 - **Migrações**: rodam sozinhas na subida do container, com o papel dono.
 - **Reversão**: o deploy volta sozinho para a imagem anterior se a saúde falhar. Para voltar manualmente, rode o job de deploy do commit anterior (as duas últimas imagens ficam na VPS).
-- **Backup**: `scripts/backup.sh` faz o dump atômico e **testa a restauração**. Ainda **não está agendado** no cron nem copiado para fora da VPS (ver pendências).
+- **Backup**: `deploy/bolao-backup` (instalado em `/usr/local/sbin`) roda pelo cron (`/etc/cron.d/bolao-backup`) como `deploy`: dump diário às 04:15 (produção) e 04:25 (homologação), atômico, guardando 30 dias em `/srv/bolao/<ambiente>/back/backups` (modo 700). Aos domingos, `verificar` restaura o dump mais recente num banco temporário, confere tabelas e usuário e apaga o temporário. Sinais: `backups/ultimo-ok` (data do último bom), `backups/ULTIMA-FALHA` (existe se o último falhou) e `backups/backup.log`. Restaurar: `gunzip -c backups/bolao-AAAAMMDD-HHMMSS.sql.gz | docker compose -p <projeto> exec -T postgres psql -U bolao -d bolao`. **Ainda não há cópia para fora da VPS** (ver pendências).
 - **Primeiro acesso do administrador**: a senha inicial está em `/srv/bolao/<ambiente>/back/.env`. Entre, troque em "Minha conta" e apague a linha `ADMIN_PASSWORD` do `.env`.
 - **Certificados**: emitidos com acme.sh (ZeroSSL, validação HTTP-01) e instalados em `/etc/nginx/ssl-certificates/`; a renovação é automática pelo cron do acme.sh, com recarga do nginx. (O Let's Encrypt não conseguiu validar o DNS da HostGator, por isso a escolha.)
 - **Memória**: a VPS tem 2 GB, compartilhados com CloudPanel e outros serviços. Os limites são Postgres 512 MB, API 384 MB e web 256 MB por ambiente; o uso real fica perto de 40 MB por container.
@@ -469,7 +469,7 @@ Passo a passo de montagem (provisionamento, chave, `.env`, sites, DNS, certifica
 
 ## 17. Pendências conhecidas
 
-- **Backup automático e cópia externa** do Postgres (cron do usuário `deploy` e destino fora da VPS).
+- **Cópia externa do backup**: o backup diário já roda, mas os arquivos ficam só na própria VPS. Falta definir o destino fora dela (bucket S3/Backblaze via rclone, Google Drive ou cópia puxada de outra máquina).
 - **Retenção de dados**: a tela de inscrição promete apagar os dados quando o bolão acabar, mas a rotina de limpeza ainda não existe.
 - **DMARC** do domínio de e-mail ainda não publicado (recomendado `p=none` para começar).
 - **Memória e serviços da VPS**: há serviços sem uso (MySQL, FTP) escutando em todas as interfaces; vale desligar ou restringir.

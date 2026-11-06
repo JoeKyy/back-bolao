@@ -35,6 +35,8 @@ touch /home/deploy/.ssh/authorized_keys && chown deploy:deploy /home/deploy/.ssh
 
 echo "== 3. Comando de deploy"
 install -m 0755 -o root -g root "$AQUI/bolao-deploy" /usr/local/sbin/bolao-deploy
+install -m 0755 -o root -g root "$AQUI/bolao-backup" /usr/local/sbin/bolao-backup
+install -m 0644 -o root -g root "$AQUI/bolao-backup.cron" /etc/cron.d/bolao-backup
 
 echo "== 4. Pastas por ambiente (cada uma com seu .env, fora do git)"
 for amb in producao homolog; do

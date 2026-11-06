@@ -54,6 +54,6 @@ O "esqueci minha senha" envia pelo Postfix do próprio host, sem credencial, no 
 
 - Estado: `ssh -i ~/.ssh/bolao_deploy -p 22022 deploy@143.95.185.142 "estado homolog back"` (mostra a etiqueta no ar e a anterior).
 - Reversão manual: reenviar a imagem anterior não é preciso, ela fica no servidor (as 2 últimas). Rode o job de deploy do commit anterior, ou, como root, `API_TAG=<sha anterior> docker compose --profile servidor up -d --no-deps api` na pasta do ambiente. Migrações são só aditivas, então a versão anterior continua compatível.
-- Backup: `bash scripts/backup.sh` agendado no cron do usuário `deploy`, de dentro de `/srv/bolao/<ambiente>/back`, e cópia para fora da VPS (ainda a definir).
+- Backup: `bolao-backup` (instalado pelo `provisionar-vps.sh` junto com `/etc/cron.d/bolao-backup`): dump diário por ambiente com retenção de 30 dias e verificação semanal por restauração num banco temporário. Log e sinais em `/srv/bolao/<ambiente>/back/backups` (`backup.log`, `ultimo-ok`, `ULTIMA-FALHA`). Cópia para fora da VPS: ainda a definir.
 - Memória: 2 GB com CloudPanel, MySQL e vários PHP-FPM ligados deixam ~850 MB livres. Postgres (512 MB) + API (384 MB) + web de DOIS ambientes não cabem sem desligar o que não é usado (versões de PHP, Varnish, Memcached, MySQL se ninguém usa). Medir antes de ligar a produção; ver INF-04.
 - Segurança do usuário `deploy`: estar no grupo `docker` equivale a root na máquina, por isso a chave é restrita ao comando forçado. Guarde a chave privada só como segredo do GitHub.
